@@ -3,6 +3,7 @@
 Plan atómico y ordenado para la Fase 1. Cada tarea tiene objetivo claro, archivos afectados, criterio de aceptación y dependencias. Ejecutar en orden.
 
 **Convención de estado**:
+
 - `[ ]` pendiente
 - `[~]` en curso
 - `[x]` completa
@@ -16,7 +17,7 @@ Plan atómico y ordenado para la Fase 1. Cada tarea tiene objetivo claro, archiv
 - **Objetivo**: estructura raíz del proyecto lista para recibir crates.
 - **Archivos**:
   - `Cargo.toml` (workspace con `members = ["crates/*"]`, `resolver = "2"`, perfiles `release` con LTO y `codegen-units = 1`)
-  - `.gitignore` (target/, *.fixlog-idx, .DS_Store, etc.)
+  - `.gitignore` (target/, \*.fixlog-idx, .DS_Store, etc.)
   - `README.md` (stub: título, one-liner, link a `docs/ROADMAP.md`)
   - `rust-toolchain.toml` (channel = "stable", components = ["rustfmt", "clippy"])
   - `rustfmt.toml` (edition = "2021", max_width = 100)
@@ -43,7 +44,7 @@ Plan atómico y ordenado para la Fase 1. Cada tarea tiene objetivo claro, archiv
 
 ## T03 · Stub del crate `fixlog-parser` con tipos base
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: T01
 - **Objetivo**: tipos públicos definidos sin lógica, compilables.
 - **Archivos**:
