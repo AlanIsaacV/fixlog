@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
-members  = ["crates/fixlog-parser"]
+members  = [
+    "crates/fixlog-cli",
+    "crates/fixlog-core",
+    "crates/fixlog-dict",
+    "crates/fixlog-format",
+    "crates/fixlog-parser",
+]
 
 [workspace.package]
 edition      = "2024"

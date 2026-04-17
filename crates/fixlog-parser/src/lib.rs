@@ -9,8 +9,9 @@
 use smallvec::SmallVec;
 
 pub mod tokenizer;
+pub mod validator;
 
-pub use tokenizer::parse_one;
+pub use tokenizer::{parse_all, parse_all_with_format, parse_one};
 
 /// Tag `8` — BeginString (e.g. `FIX.4.4`, `FIXT.1.1`).
 pub const TAG_BEGIN_STRING: u32 = 8;

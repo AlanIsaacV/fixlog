@@ -1,16 +1,14 @@
 [package]
-name         = "fixlog-parser"
+name         = "fixlog-core"
 version      = "0.1.0"
 edition.workspace      = true
 rust-version.workspace = true
 license.workspace      = true
 repository.workspace   = true
 authors.workspace      = true
-description  = "Zero-copy FIX protocol tokenizer and raw message types."
+description  = "Facade crate that re-exports fixlog-format, fixlog-parser, and fixlog-dict."
 
 [dependencies]
+fixlog-dict   = { path = "../fixlog-dict" }
 fixlog-format = { path = "../fixlog-format" }
-memchr        = "2"
-smallvec      = "1"
-thiserror     = "2"
-tracing       = "0.1"
+fixlog-parser = { path = "../fixlog-parser" }

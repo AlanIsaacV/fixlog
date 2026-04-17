@@ -1,0 +1,15 @@
+[package]
+name         = "fixlog-dict"
+version      = "0.1.0"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+description  = "FIX protocol dictionaries: generated field definitions and enum labels."
+
+[dependencies]
+fixlog-parser = { path = "../fixlog-parser" }
+
+[build-dependencies]
+quick-xml = "0.39"

@@ -1,0 +1,21 @@
+[package]
+name         = "fixlog-cli"
+version      = "0.1.0"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+description  = "CLI for inspecting FIX log files."
+
+[[bin]]
+name = "fixlog"
+path = "src/main.rs"
+
+[dependencies]
+fixlog-core       = { path = "../fixlog-core" }
+anyhow            = "1"
+clap              = { version = "4", features = ["derive"] }
+memmap2           = "0.9"
+tracing           = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

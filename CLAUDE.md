@@ -77,9 +77,18 @@ cargo run -p fixlog-cli -- sniff fixtures/sample.log # Run CLI
 
 - Roadmap completo de 5 fases: `docs/ROADMAP.md`
 - Plan detallado de la fase en curso: `docs/PHASE1_PLAN.md`
-- Arquitectura de módulos: `docs/ARCHITECTURE.md`
+- Arquitectura de módulos (intención de diseño): `docs/ARCHITECTURE.md`
 
 Fase actual: **Fase 1 — Core Parser (CLI, sin TUI)**.
+
+## Documentación LLM-oriented (cargar selectivamente)
+
+`docs/agent/INDEX.md` es un índice modular para cargar **solo** las secciones relevantes a la tarea en curso. Empieza ahí para cualquier trabajo no trivial — tiene una tabla que mapea tipo de tarea → archivos a leer.
+
+- `docs/agent/state.md` — estado real del proyecto (autoritativo sobre `PHASE1_PLAN.md` cuando discrepan).
+- `docs/agent/crates/{parser,format,dict,cli,core}.md` — internals de cada crate.
+- `docs/agent/reference/{fix-protocol,fixtures}.md` — primer de protocolo FIX y catálogo de fixtures.
+- `docs/agent/patterns.md` — idioms transversales (zero-copy, errores, tracing, mmap).
 
 ## Principios de colaboración con el agente
 
