@@ -27,7 +27,7 @@ Plan atómico y ordenado para la Fase 1. Cada tarea tiene objetivo claro, archiv
 
 ## T02 · Corpus de fixtures inicial
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: T01
 - **Objetivo**: set mínimo de logs para validar el parser con datos reales y sintéticos.
 - **Archivos**:
