@@ -31,6 +31,7 @@ pub mod input;
 pub mod io;
 pub mod search;
 pub mod state;
+pub mod summary;
 pub mod terminal;
 pub mod theme;
 pub mod view;
