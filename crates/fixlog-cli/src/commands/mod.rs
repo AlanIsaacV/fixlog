@@ -1,5 +1,8 @@
 pub mod grep;
+pub mod histogram;
+pub mod orders;
 pub mod parse;
+pub mod sessions;
 pub mod sniff;
 pub mod stats;
 pub mod tui;

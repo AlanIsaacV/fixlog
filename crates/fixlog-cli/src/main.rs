@@ -77,6 +77,53 @@ enum Command {
         #[arg(short = 'F', long)]
         follow: bool,
     },
+    /// Aggregate messages by `(SenderCompID, TargetCompID)` session pair.
+    ///
+    /// Examples:
+    ///   fixlog sessions file.log
+    ///   fixlog sessions file.log --format json | jq .
+    Sessions {
+        /// Path to the log file.
+        file: PathBuf,
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = ParseFormat::Pretty)]
+        format: ParseFormat,
+    },
+    /// Reconstruct order lifecycles by ClOrdID.
+    ///
+    /// Without `--id`: list the N ClOrdIDs with the most events.
+    /// With `--id`: print the full timeline + Gantt row.
+    Orders {
+        /// Path to the log file.
+        file: PathBuf,
+        /// ClOrdID (tag 11) to reconstruct. If omitted, list top-N by event count.
+        #[arg(long)]
+        id: Option<String>,
+        /// Number of ClOrdIDs to list when `--id` is absent.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = ParseFormat::Pretty)]
+        format: ParseFormat,
+    },
+    /// Temporal histogram of SendingTime (tag 52).
+    ///
+    /// Examples:
+    ///   fixlog histogram file.log
+    ///   fixlog histogram file.log --bucket 500ms --width 120 --peaks 3
+    Histogram {
+        /// Path to the log file.
+        file: PathBuf,
+        /// Bucket width: `<N>ms`, `<N>s`, or `<N>m`.
+        #[arg(long, default_value = "1s")]
+        bucket: String,
+        /// Sparkline width in columns.
+        #[arg(long, default_value_t = 80)]
+        width: usize,
+        /// Number of top-k peaks to highlight below the sparkline.
+        #[arg(long, default_value_t = 5)]
+        peaks: usize,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -116,6 +163,19 @@ fn main() -> Result<()> {
             filter,
             follow,
         } => commands::tui::run(&file, filter, follow),
+        Command::Sessions { file, format } => commands::sessions::run(&file, format),
+        Command::Orders {
+            file,
+            id,
+            limit,
+            format,
+        } => commands::orders::run(&file, id.as_deref(), limit, format),
+        Command::Histogram {
+            file,
+            bucket,
+            width,
+            peaks,
+        } => commands::histogram::run(&file, &bucket, width, peaks),
     }
 }
 

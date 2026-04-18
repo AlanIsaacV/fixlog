@@ -13,6 +13,7 @@ name = "fixlog"
 path = "src/main.rs"
 
 [dependencies]
+fixlog-analysis   = { path = "../fixlog-analysis" }
 fixlog-core       = { path = "../fixlog-core" }
 fixlog-tui        = { path = "../fixlog-tui" }
 anyhow            = "1"
