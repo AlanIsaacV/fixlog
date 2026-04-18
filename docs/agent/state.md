@@ -10,6 +10,8 @@
 
 **Fase B — TUI rediseño, riqueza semántica (2026-04-18)** — **done, committed**. New `summary` module with a per-MsgType table (D/8/F/G/3/j/A/5/0/1/2) producing `MessageSummary { badges, client_order_id, detail }`; unknown MsgTypes fall through to the generic Side/Qty/Symbol fallback. `list::build_line` consumes `summary::summarize` directly; duplicated helpers dropped. Panel focus extended: `AppState.detail_cursor` + `detail_fields_len` + `detail_cursor_field`; `j`/`k`/`g`/`G`/`Ctrl+D/U` in `Focus::Detail` move the per-field cursor (viewport auto-scrolls); the renderer highlights the cursor row. `Action::FilterFromDetail { negated }` bound to `f`/`x` composes `tag=value` / `NOT (tag=value)` into `user_filter_text` via `recompute_effective_filter`; bareword-vs-quoted value heuristic honours the DSL grammar.
 
+**Fase 5 partial (2026-04-18)** — **4 items done, committed**. (1) `fixlog-analysis` session / order / histogram builders + `fixlog-cli orders` migrated to `parse_one_with_format` so pipe-separated logs resolve (regression test: `crates/fixlog-analysis/tests/pipe_separated.rs`). (2) `QueryExpr` now derives `Clone` via `Op::Re(Arc<Regex>)`; TUI `FilterSnapshot` carries the compiled expression directly and `iterate_search` uses `search_last.clone()` — no more re-parse on `Esc` rollback or `n`/`N`. Frame bench neutral at ~156 µs. (3) New `fixlog-render` crate (`0.1.0`) with `write_pretty` / `write_jsonl` / `write_fix` / `write_csv_header+row`, re-exported from `fixlog-core::render`; CLI `parse` / `grep` and TUI `:export` all consume it. (4) FIX 5.0 and 5.0 SP1 dictionaries added (XMLs vendored from QuickFIX v1.15.1); `FixVersion::{Fix50, Fix50Sp1}`, chains `CHAIN_FIXT11_FIX50` / `CHAIN_FIXT11_FIX50SP1`, `chain_for` routes ApplVerID `7`/`8` accordingly (SP2 remains default for unknown/missing).
+
 **Fase 3 — TUI básico (ratatui)** — **effectively complete**. All P3-T01..T16 landed. TUI renders <1 ms per frame on 1M messages (22× under the 16 ms budget); parser and index benches stable within noise. Integration tests cover bootstrap, navigation, command bar, search, yank, and follow watcher end-to-end.
 
 **Fase 2 — Indexación + Tailing + Query DSL** — effectively complete. P2-T01..T09 all landed; only P2-T10 (`fixlog index` subcommand with serialized cache) remains, and it's marked as optional/stretch in the plan — best deferred to Phase 5 alongside config persistence.
@@ -27,6 +29,7 @@ Fase 1 is closed (all T01-T16 done; T17 only informal sign-off).
 - `crates/fixlog-cli` — binary `fixlog` with `sniff` / `parse` / `stats` / `grep` (with `--follow`) / `tui` (with `--follow`). See `crates/cli.md`.
 - `crates/fixlog-tui` — interactive ratatui + crossterm frontend: virtual list, resolved detail, status + command + search bars, vim navigation, follow/browse, live filter preview, yank to clipboard, MsgType colouring, stat-based follow watcher. See `crates/tui.md`.
 - `crates/fixlog-analysis` — session tracking, order lifecycle, temporal histogram (Phase 4). Pure library; depends on `fixlog-core`. Consumed directly by `fixlog-cli` and `fixlog-tui`. Not re-exported from `fixlog-core` (by design — analysis composes on top of core primitives and stays distinct). See `crates/analysis.md`.
+- `crates/fixlog-render` — shared rendering helpers (`write_pretty`, `write_jsonl`, `write_fix`, `write_csv_header` + `write_csv_row`). Depends on `fixlog-dict` + `fixlog-parser` only. Re-exported as `fixlog_core::render`; consumed by `fixlog-cli` (parse/grep) and `fixlog-tui` (`:export`). Added in Fase 5 partial (2026-04-18).
 
 ## Completed (vs PHASE1_PLAN.md)
 
@@ -185,13 +188,11 @@ Run: `cargo bench -p fixlog-analysis --bench analysis`. Machine: Darwin 25.3.0.
 
 ## What's next, ordered by value
 
-1. **Phase 5** — symbolic query names (P4-T15 deferred), persistent config (`~/.config/fixlog/config.toml` for theme, hot-tag set, saved filters, keybindings, persisted bookmarks), P2-T10 `index` subcommand with serialized cache, FIX 5.0 / 5.0 SP1 dictionaries.
-2. **P2-T10 `index` subcommand** (optional / Phase 5) — serialize an index to `<file>.fixlog-idx` with content hash. Unlocks <1s reopen for 100 MiB+ logs; probably lives alongside config persistence.
-3. **Hot-tag pre-filter for TUI filter path** — cuts `apply_filter` time on 1M messages from ~480 ms to <100 ms when the expression reduces to AND-of-equalities on hot tags. Implementation lives in `fixlog-tui/src/state.rs` and exploits `SecondaryIndex::lookup` already exposed by `fixlog-index`.
-4. **Dict-aware query names** — `MsgType=NewOrderSingle` instead of `35=D`. Thin adapter over `fixlog-dict`; gated by a concrete user ask.
-5. **`--strict` flag on parse** — treat checksum mismatches as errors (user-requested feature flag from earlier session).
-6. **FIX 5.0 / 5.0SP1 dictionaries** — add to `DICTIONARIES` list in `crates/fixlog-dict/build.rs` if a real fixture needs them.
-7. **Persistent TUI config** (Phase 5) — `~/.config/fixlog/config.toml` for theme, hot tags, saved filters, keybindings.
+1. **P2-T10 `index` subcommand** (optional / Phase 5) — serialize an index to `<file>.fixlog-idx` with content hash. Unlocks <1s reopen for 100 MiB+ logs; probably lives alongside config persistence.
+2. **`--strict` flag on parse** — treat checksum mismatches as errors (user-requested feature flag from earlier session).
+3. **Persistent TUI config** (Phase 5) — `~/.config/fixlog/config.toml` for theme, hot tags, saved filters, keybindings, persisted bookmarks.
+
+Items previously in this list and since done in Fase 5 partial (2026-04-18): Arc-wrapped `QueryExpr: Clone`, `fixlog-render` crate promotion, FIX 5.0 / 5.0 SP1 dictionaries, analysis/CLI `parse_one_with_format` migration. Symbolic query names (P4-T15) removed from the roadmap per the 2026-04-18 decision log.
 
 ## Known gaps / decisions deferred
 
@@ -199,10 +200,10 @@ Run: `cargo bench -p fixlog-analysis --bench analysis`. Machine: Darwin 25.3.0.
 - **TUI filter full-scan, no hot-tag pre-filter yet**: `state::evaluate_visible` scans all messages for every filter. `SecondaryIndex` is populated but unused by the TUI — a future optimisation wins ~5× on hot-tag filters (`35=D`, `49=BROKER1`). Acceptable for <1M messages.
 - **TUI follow watcher is stat-based, not `notify`-based**: the event loop already polls at 250 ms via `crossterm::event::poll`; piggy-backing there beats adding a `notify` thread + channel. Up to 250 ms visual latency vs ~instant for `grep --follow`. If a TUI user complains about lag, wire `notify` the way `fixlog-cli/src/commands/grep.rs` does.
 - **TUI `io.rs` duplicates `fixlog-cli/src/io.rs`**: two tiny copies of `mmap_file` / `head`. If a third consumer appears, promote to `fixlog-core`.
-- **`QueryExpr` is not `Clone`**: bug-adjacent inconvenience that forced `filter_text: Option<String>` on `AppState` (source text kept alongside the compiled expression so snapshot/restore and `n`/`N` can re-parse). Fixing upstream (derive `Clone` where feasible, or redesign `Regex` ownership) would remove the string round-trip.
+- ~~`QueryExpr` is not `Clone`~~: **resolved in Fase 5 partial (2026-04-18)** by wrapping `Op::Re` in `Arc<Regex>`. `FilterSnapshot` now stores the compiled expression; `iterate_search` clones it instead of re-parsing.
 - **ResolvedMessageOwned duplicates ResolvedMessage<'a>**: we materialise because `Arc<Mmap>` gets swapped under `--follow`, but the duplication is a smell. Could be folded into `fixlog-dict` if the pattern repeats.
 - **Parser ignores `LogFormat.line_prefix`**: the tokenizer scans for `8=FIX` via memmem, so variable-length prefixes "just work". `LinePrefix::Fixed(n)` is kept in the sniffer output for display only.
-- **Chain selection is per-message, not per-session**: the resolver reads `BeginString` + `ApplVerID` from each message. For FIXT sessions where `ApplVerID` only appears on Logon, non-Logon messages fall back to the default `CHAIN_FIXT11_FIX50SP2`. A session-aware cache could improve accuracy but is out of scope.
+- **Chain selection is per-message, not per-session**: the resolver reads `BeginString` + `ApplVerID` from each message. For FIXT sessions where `ApplVerID` only appears on Logon, non-Logon messages fall back to the default `CHAIN_FIXT11_FIX50SP2` (SP2 covers the common-case wire format). A session-aware cache could improve accuracy but is out of scope. FIX 5.0 and 5.0 SP1 are now valid routing targets when `ApplVerID=7` / `ApplVerID=8` appears explicitly on the message.
 - **Custom tags beyond dictionary range**: show as `?` in pretty output, `"name": null` in JSON.
 - **`LogIndex.consumed` semantics**: points at the byte immediately past the last *successfully* indexed message, not at the end of the buffer. This is intentional — trailing partial messages (producer flushed half) are re-scanned by `append_from_offset` instead of being claimed-and-lost. Callers that expected `file_size == buf.len()` need to track that separately.
 - **Query DSL is tag-number only**: no `MsgType=NewOrderSingle` yet — the parser stays dict-agnostic and `fixlog-query` doesn't depend on `fixlog-dict`. Symbolic names belong in a future thin adapter if we need them, probably in Phase 3 alongside the TUI.
