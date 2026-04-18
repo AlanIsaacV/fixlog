@@ -23,6 +23,21 @@ pub fn parse_one(buf: &[u8]) -> Result<(RawMessage<'_>, usize), ParseError> {
     parse_one_inner(buf, 0, SOH)
 }
 
+/// Parse a single FIX message from `buf` using the separator declared by `format`.
+///
+/// Equivalent to [`parse_one`] for SOH-separated logs, but also correct for pipe-
+/// (`|`), caret-, semicolon-, or custom-separated logs produced by human-readable
+/// loggers (QuickFIX-J `|`, some legacy C++ wrappers, etc.).
+///
+/// Only `format.separator` is consulted — the line prefix is ignored because the
+/// caller is expected to pass a slice that already starts at `8=`.
+pub fn parse_one_with_format<'a>(
+    buf: &'a [u8],
+    format: &LogFormat,
+) -> Result<(RawMessage<'a>, usize), ParseError> {
+    parse_one_inner(buf, 0, format.separator.as_byte())
+}
+
 /// Iterate over all messages in `buf`, assuming SOH separators.
 ///
 /// The iterator is prefix-agnostic: it scans forward for the `8=FIX` BeginString marker and
