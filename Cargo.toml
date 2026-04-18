@@ -1,11 +1,15 @@
 [workspace]
 resolver = "2"
 members  = [
+    "crates/fixlog-analysis",
     "crates/fixlog-cli",
     "crates/fixlog-core",
     "crates/fixlog-dict",
     "crates/fixlog-format",
+    "crates/fixlog-index",
     "crates/fixlog-parser",
+    "crates/fixlog-query",
+    "crates/fixlog-tui",
 ]
 
 [workspace.package]

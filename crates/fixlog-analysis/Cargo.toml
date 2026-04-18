@@ -1,0 +1,15 @@
+[package]
+name         = "fixlog-analysis"
+version      = "0.1.0"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+description  = "Session tracking, order lifecycle, and temporal histogram analysis over FIX logs."
+
+[dependencies]
+fixlog-core = { path = "../fixlog-core" }
+smallvec    = "1"
+thiserror   = "2"
+tracing     = "0.1"
