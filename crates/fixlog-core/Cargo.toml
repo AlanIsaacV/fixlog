@@ -1,6 +1,6 @@
 [package]
 name         = "fixlog-core"
-version      = "0.1.0"
+version      = "0.2.0"
 edition.workspace      = true
 rust-version.workspace = true
 license.workspace      = true
@@ -11,4 +11,6 @@ description  = "Facade crate that re-exports fixlog-format, fixlog-parser, and f
 [dependencies]
 fixlog-dict   = { path = "../fixlog-dict" }
 fixlog-format = { path = "../fixlog-format" }
+fixlog-index  = { path = "../fixlog-index" }
 fixlog-parser = { path = "../fixlog-parser" }
+fixlog-query  = { path = "../fixlog-query" }
