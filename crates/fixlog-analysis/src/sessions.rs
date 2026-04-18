@@ -32,7 +32,7 @@
 use std::collections::HashMap;
 
 use fixlog_core::parser::{TAG_MSG_SEQ_NUM, TAG_MSG_TYPE, TAG_SENDER_COMP_ID, TAG_TARGET_COMP_ID};
-use fixlog_core::{LogFormat, LogIndex, parse_one};
+use fixlog_core::{LogFormat, LogIndex, parse_one_with_format};
 use smallvec::SmallVec;
 
 use crate::util::{find_tag, parse_u32_ascii};
@@ -124,7 +124,7 @@ impl SessionMap {
     pub fn build(index: &LogIndex, buf: &[u8], format: &LogFormat) -> Self {
         let mut map = Self::default();
         map.append_internal(index, buf, format, 0);
-        map.recompute_gaps(index, buf);
+        map.recompute_gaps(index, buf, format);
         map
     }
 
@@ -152,14 +152,14 @@ impl SessionMap {
         // Gap detection is cheap enough (one re-parse per ordinal) that
         // recomputing globally keeps the implementation simple and
         // guarantees equivalence with a fresh `build`.
-        self.recompute_gaps(index, buf);
+        self.recompute_gaps(index, buf, format);
     }
 
     fn append_internal(
         &mut self,
         index: &LogIndex,
         buf: &[u8],
-        _format: &LogFormat,
+        format: &LogFormat,
         from_ordinal: u32,
     ) {
         let total = index.len();
@@ -172,7 +172,7 @@ impl SessionMap {
                 self.by_ordinal.push(None);
                 continue;
             };
-            let Ok((msg, _)) = parse_one(bytes) else {
+            let Ok((msg, _)) = parse_one_with_format(bytes, format) else {
                 self.by_ordinal.push(None);
                 continue;
             };
@@ -211,7 +211,7 @@ impl SessionMap {
 
     /// Re-detect gaps for every session. Runs after the aggregation pass
     /// because gaps require re-sorting by sequence number per direction.
-    fn recompute_gaps(&mut self, index: &LogIndex, buf: &[u8]) {
+    fn recompute_gaps(&mut self, index: &LogIndex, buf: &[u8], format: &LogFormat) {
         for (key, stats) in self.by_key.iter_mut() {
             stats.gaps.clear();
             let mut in_pairs: Vec<(u32, u32)> = Vec::new();
@@ -221,7 +221,7 @@ impl SessionMap {
                 let Some(bytes) = index.message_bytes(buf, ord_usize) else {
                     continue;
                 };
-                let Ok((msg, _)) = parse_one(bytes) else {
+                let Ok((msg, _)) = parse_one_with_format(bytes, format) else {
                     continue;
                 };
                 let Some(sender) = find_tag(&msg, TAG_SENDER_COMP_ID) else {
@@ -338,7 +338,7 @@ mod tests {
         // is possible without a second builder call), so we just call
         // `append_from` twice with different starting offsets.
         incremental.append_internal(&index, &buf, &format, 0);
-        incremental.recompute_gaps(&index, &buf);
+        incremental.recompute_gaps(&index, &buf, &format);
 
         // Equivalence: same keys, same counts, same gap set.
         assert_eq!(fresh.by_key.len(), incremental.by_key.len());

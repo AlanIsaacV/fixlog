@@ -8,7 +8,7 @@
 use std::time::Duration;
 
 use fixlog_core::parser::TAG_SENDING_TIME;
-use fixlog_core::{LogFormat, LogIndex, parse_one};
+use fixlog_core::{LogFormat, LogIndex, parse_one_with_format};
 
 use crate::util::{find_tag, parse_sending_time, system_time_to_nanos};
 
@@ -35,7 +35,7 @@ impl Histogram {
     /// `bucket` is clamped to a minimum of 1 ns to avoid division by zero.
     /// An empty index (or an index where no message has a valid timestamp)
     /// produces a histogram with an empty `bins` vector.
-    pub fn build(index: &LogIndex, buf: &[u8], _format: &LogFormat, bucket: Duration) -> Self {
+    pub fn build(index: &LogIndex, buf: &[u8], format: &LogFormat, bucket: Duration) -> Self {
         let bucket_ns_u64 = bucket.as_nanos().max(1).min(u64::MAX as u128) as u64;
         let bucket_ns = bucket_ns_u64 as u128;
 
@@ -47,7 +47,7 @@ impl Histogram {
                 dropped = dropped.saturating_add(1);
                 continue;
             };
-            let Ok((msg, _)) = parse_one(bytes) else {
+            let Ok((msg, _)) = parse_one_with_format(bytes, format) else {
                 dropped = dropped.saturating_add(1);
                 continue;
             };

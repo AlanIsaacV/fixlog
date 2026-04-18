@@ -23,7 +23,7 @@ use std::time::SystemTime;
 
 use fixlog_core::index::secondary::{TAG_CL_ORD_ID, TAG_ORDER_ID};
 use fixlog_core::parser::{TAG_MSG_TYPE, TAG_SENDING_TIME};
-use fixlog_core::{LogFormat, LogIndex, parse_one};
+use fixlog_core::{LogFormat, LogIndex, parse_one_with_format};
 use smallvec::SmallVec;
 
 use crate::util::{find_tag, parse_sending_time};
@@ -57,12 +57,7 @@ pub struct OrderTimeline {
 impl OrderTimeline {
     /// Reconstruct the timeline for `clordid`. Returns `None` if no message
     /// in the index has `11=<clordid>`.
-    pub fn build(
-        index: &LogIndex,
-        buf: &[u8],
-        _format: &LogFormat,
-        clordid: &[u8],
-    ) -> Option<Self> {
+    pub fn build(index: &LogIndex, buf: &[u8], format: &LogFormat, clordid: &[u8]) -> Option<Self> {
         let initial = index.secondary.lookup(TAG_CL_ORD_ID, clordid);
         if initial.is_empty() {
             return None;
@@ -76,7 +71,7 @@ impl OrderTimeline {
             let Some(bytes) = index.message_bytes(buf, ord as usize) else {
                 continue;
             };
-            let Ok((msg, _)) = parse_one(bytes) else {
+            let Ok((msg, _)) = parse_one_with_format(bytes, format) else {
                 continue;
             };
             if let Some(oid) = find_tag(&msg, TAG_ORDER_ID) {
@@ -99,7 +94,7 @@ impl OrderTimeline {
             let Some(bytes) = index.message_bytes(buf, ord as usize) else {
                 continue;
             };
-            let Ok((msg, _)) = parse_one(bytes) else {
+            let Ok((msg, _)) = parse_one_with_format(bytes, format) else {
                 continue;
             };
             let msg_type = find_tag(&msg, TAG_MSG_TYPE)

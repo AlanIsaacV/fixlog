@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::{Context, Result, anyhow};
 use fixlog_analysis::orders::{OrderTimeline, render_gantt};
 use fixlog_core::index::secondary::TAG_CL_ORD_ID;
-use fixlog_core::{LogIndex, build_from_bytes_parallel, parse_one};
+use fixlog_core::{LogFormat, LogIndex, build_from_bytes_parallel, parse_one_with_format};
 
 use crate::ParseFormat;
 use crate::io::{head, mmap_file};
@@ -34,7 +34,7 @@ pub fn run(path: &Path, id: Option<&str>, limit: usize, format: ParseFormat) -> 
             }
         }
         None => {
-            let counts = collect_clordid_counts(&mmap, &index);
+            let counts = collect_clordid_counts(&mmap, &index, &log_format);
             let mut entries: Vec<_> = counts.into_iter().collect();
             entries.sort_by_key(|b| std::cmp::Reverse(b.1));
             entries.truncate(limit);
@@ -58,13 +58,17 @@ pub fn run(path: &Path, id: Option<&str>, limit: usize, format: ParseFormat) -> 
 /// pre-grouped, but doesn't expose its key set via the public API. A
 /// linear scan is fine here — the parser runs at ~300 MiB/s and this is
 /// a one-shot CLI command.
-fn collect_clordid_counts(buf: &[u8], index: &LogIndex) -> HashMap<Vec<u8>, u32> {
+fn collect_clordid_counts(
+    buf: &[u8],
+    index: &LogIndex,
+    format: &LogFormat,
+) -> HashMap<Vec<u8>, u32> {
     let mut counts: HashMap<Vec<u8>, u32> = HashMap::new();
     for ord in 0..index.len() {
         let Some(bytes) = index.message_bytes(buf, ord) else {
             continue;
         };
-        let Ok((msg, _)) = parse_one(bytes) else {
+        let Ok((msg, _)) = parse_one_with_format(bytes, format) else {
             continue;
         };
         for (t, v) in &msg.tags {
