@@ -1,0 +1,13 @@
+[package]
+name         = "fixlog-render"
+version      = "0.1.0"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+description  = "Shared rendering helpers (pretty / JSONL / CSV / raw FIX) for resolved and raw FIX messages."
+
+[dependencies]
+fixlog-dict   = { path = "../fixlog-dict" }
+fixlog-parser = { path = "../fixlog-parser" }

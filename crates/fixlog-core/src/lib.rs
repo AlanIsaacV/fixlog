@@ -14,6 +14,7 @@ pub use fixlog_format as format;
 pub use fixlog_index as index;
 pub use fixlog_parser as parser;
 pub use fixlog_query as query;
+pub use fixlog_render as render;
 
 /// The most commonly-used items, re-exported at the crate root so callers can
 /// write `fixlog_core::parse_all_with_format(...)` and `fixlog_core::resolve(...)`

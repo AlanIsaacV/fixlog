@@ -14,3 +14,4 @@ fixlog-format = { path = "../fixlog-format" }
 fixlog-index  = { path = "../fixlog-index" }
 fixlog-parser = { path = "../fixlog-parser" }
 fixlog-query  = { path = "../fixlog-query" }
+fixlog-render = { path = "../fixlog-render" }

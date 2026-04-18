@@ -504,6 +504,7 @@ dependencies = [
  "fixlog-index",
  "fixlog-parser",
  "fixlog-query",
+ "fixlog-render",
 ]
 
 [[package]]
@@ -555,6 +556,14 @@ dependencies = [
  "fixlog-parser",
  "regex",
  "thiserror",
+]
+
+[[package]]
+name = "fixlog-render"
+version = "0.1.0"
+dependencies = [
+ "fixlog-dict",
+ "fixlog-parser",
 ]
 
 [[package]]

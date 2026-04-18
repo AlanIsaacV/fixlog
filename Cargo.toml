@@ -9,6 +9,7 @@ members  = [
     "crates/fixlog-index",
     "crates/fixlog-parser",
     "crates/fixlog-query",
+    "crates/fixlog-render",
     "crates/fixlog-tui",
 ]
 
