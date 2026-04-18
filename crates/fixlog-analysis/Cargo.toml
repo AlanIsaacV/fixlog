@@ -13,3 +13,10 @@ fixlog-core = { path = "../fixlog-core" }
 smallvec    = "1"
 thiserror   = "2"
 tracing     = "0.1"
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name    = "analysis"
+harness = false
