@@ -66,29 +66,32 @@ Detalles completos: ver `docs/ARCHITECTURE.md`.
 
 ```bash
 cargo build --all                                    # Build todo
-cargo test --all                                     # Run all tests
-cargo clippy --all-targets -- -D warnings            # Lint estricto
+cargo test --all                                     # Run all tests (~189)
+cargo clippy --all-targets --all-features -- -D warnings  # Lint estricto
 cargo fmt --all                                      # Format
 cargo bench -p fixlog-parser                         # Bench parser
+cargo bench -p fixlog-index                          # Bench index
+cargo bench -p fixlog-tui   --bench frame            # Bench frame budget TUI
 cargo run -p fixlog-cli -- sniff fixtures/sample.log # Run CLI
+cargo run -p fixlog-cli -- tui fixtures/sample.log   # Run TUI
 ```
 
 ## Roadmap y plan actual
 
 - Roadmap completo de 5 fases: `docs/ROADMAP.md`
-- Plan detallado de la fase en curso: `docs/PHASE1_PLAN.md`
+- Planes detallados por fase: `docs/PHASE{1,2,3}_PLAN.md`
 - Arquitectura de módulos (intención de diseño): `docs/ARCHITECTURE.md`
 
-Fase actual: **Fase 1 — Core Parser (CLI, sin TUI)**.
+Fases 1–3 cerradas (parser, índice paralelo + grep --follow, TUI ratatui). **Siguiente: Fase 4 — Análisis avanzado** (session tracking, order lifecycle, diff, bookmarks, export). Ver `docs/ROADMAP.md` §Fase 4.
 
 ## Documentación LLM-oriented (cargar selectivamente)
 
 `docs/agent/INDEX.md` es un índice modular para cargar **solo** las secciones relevantes a la tarea en curso. Empieza ahí para cualquier trabajo no trivial — tiene una tabla que mapea tipo de tarea → archivos a leer.
 
-- `docs/agent/state.md` — estado real del proyecto (autoritativo sobre `PHASE1_PLAN.md` cuando discrepan).
-- `docs/agent/crates/{parser,format,dict,cli,core}.md` — internals de cada crate.
+- `docs/agent/state.md` — estado real del proyecto (autoritativo sobre `PHASE*_PLAN.md` cuando discrepan).
+- `docs/agent/crates/{parser,format,dict,index,query,cli,core,tui}.md` — internals de cada crate.
 - `docs/agent/reference/{fix-protocol,fixtures}.md` — primer de protocolo FIX y catálogo de fixtures.
-- `docs/agent/patterns.md` — idioms transversales (zero-copy, errores, tracing, mmap).
+- `docs/agent/patterns.md` — idioms transversales (zero-copy, errores, tracing, mmap, Arc-swap para follow, pending_prefix para secuencias vim).
 
 ## Principios de colaboración con el agente
 

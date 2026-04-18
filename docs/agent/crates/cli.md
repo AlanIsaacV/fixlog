@@ -18,10 +18,20 @@ Binary `fixlog` with subcommands `sniff`, `parse`, `stats`. Depends only on `fix
 fixlog sniff <file>
 fixlog parse <file> [--first N] [--format pretty|json]
 fixlog stats <file>
+fixlog grep <file> --filter "<expr>" [--format ...] [--follow|-F]
+fixlog tui <file> [--filter "<expr>"] [--follow|-F]
+fixlog sessions <file> [--format pretty|json]
+fixlog orders <file> [--id CLORDID] [--limit N] [--format pretty|json]
+fixlog histogram <file> [--bucket DUR] [--width N] [--peaks K]
 fixlog -v … / -vv …   # tracing level: warn/info/debug
 ```
 
 `ParseFormat` is a `ValueEnum` (`pretty` default, `json` for JSONL).
+Fase 4 subcommands (`sessions`, `orders`, `histogram`) depend on
+`fixlog-analysis`; they build a parallel index once and reuse the same
+byte buffer for the analysis pass. `sessions` and `orders` (no-id list
+mode) exit with code 1 when the result set is empty, matching grep(1)
+conventions.
 
 ## Shared conventions
 
