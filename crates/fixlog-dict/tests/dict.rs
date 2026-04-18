@@ -88,11 +88,59 @@ fn chain_falls_through_fixt11_to_fix50sp2() {
     assert_eq!(chain_msg_type_label(chain, b"A"), Some("Logon"));
 }
 
-// FIX 4.4 has ~912 fields / 92 messages; FIX 5.0SP2 has ~1400 / ~120; FIXT11 has ~70 / ~10.
-// Lower-bound asserts detect accidental regression in the build-script.
+#[test]
+fn fix50_defines_application_fields() {
+    // Application messages exist in plain FIX 5.0 (pre-SP1/SP2). Well-known
+    // app MsgTypes and tags must resolve.
+    assert_eq!(
+        msg_type_label(FixVersion::Fix50, b"D"),
+        Some("NewOrderSingle")
+    );
+    assert_eq!(
+        msg_type_label(FixVersion::Fix50, b"8"),
+        Some("ExecutionReport")
+    );
+    // Standard app-layer tag — ClOrdID on NewOrderSingle.
+    assert_eq!(field_by_tag(FixVersion::Fix50, 11).unwrap().name, "ClOrdID");
+}
+
+#[test]
+fn fix50sp1_defines_application_fields() {
+    assert_eq!(
+        msg_type_label(FixVersion::Fix50Sp1, b"D"),
+        Some("NewOrderSingle")
+    );
+    // ApplicationSequenceControl component landed in SP1 — its underlying
+    // ApplID tag (tag 1180) must resolve in the 5.0SP1 dictionary.
+    assert_eq!(
+        field_by_tag(FixVersion::Fix50Sp1, 1180).unwrap().name,
+        "ApplID"
+    );
+}
+
+#[test]
+fn chain_for_routes_applverid_to_right_fix50_version() {
+    use fixlog_dict::{
+        CHAIN_FIXT11_FIX50, CHAIN_FIXT11_FIX50SP1, CHAIN_FIXT11_FIX50SP2, chain_for,
+    };
+
+    assert_eq!(chain_for(b"FIXT.1.1", Some(b"7")), CHAIN_FIXT11_FIX50);
+    assert_eq!(chain_for(b"FIXT.1.1", Some(b"8")), CHAIN_FIXT11_FIX50SP1);
+    assert_eq!(chain_for(b"FIXT.1.1", Some(b"9")), CHAIN_FIXT11_FIX50SP2);
+    // Unknown / missing ApplVerID still defaults to SP2 — no regression.
+    assert_eq!(chain_for(b"FIXT.1.1", None), CHAIN_FIXT11_FIX50SP2);
+}
+
+// FIX 4.4 has ~912 fields / 92 messages; FIX 5.0 / 5.0SP1 / 5.0SP2 grow
+// over time; FIXT11 has ~70 / ~10. Lower-bound asserts detect accidental
+// regression in the build-script.
 const _: () = {
     assert!(field_count(FixVersion::Fix44) >= 900);
     assert!(message_count(FixVersion::Fix44) >= 90);
+    assert!(field_count(FixVersion::Fix50) >= 900);
+    assert!(message_count(FixVersion::Fix50) >= 50);
+    assert!(field_count(FixVersion::Fix50Sp1) >= 900);
+    assert!(message_count(FixVersion::Fix50Sp1) >= 50);
     assert!(field_count(FixVersion::Fix50Sp2) >= 1400);
     assert!(message_count(FixVersion::Fix50Sp2) >= 100);
     assert!(field_count(FixVersion::Fixt11) >= 50);

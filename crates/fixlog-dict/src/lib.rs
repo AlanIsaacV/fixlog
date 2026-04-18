@@ -46,6 +46,10 @@ pub enum FixVersion {
     /// FIXT.1.1 — session-layer messages that sit below FIX 5.x application
     /// dictionaries.
     Fixt11,
+    /// FIX 5.0 — original 5.0 application-layer dictionary.
+    Fix50,
+    /// FIX 5.0 Service Pack 1 — 5.0SP1 application-layer dictionary.
+    Fix50Sp1,
     /// FIX 5.0 Service Pack 2 — current application-layer dictionary.
     Fix50Sp2,
 }
@@ -67,11 +71,19 @@ pub const CHAIN_FIXT11_FIX50SP2: DictChain = &[FixVersion::Fixt11, FixVersion::F
 /// Chain for FIXT.1.1 sessions where `ApplVerID = 6` (FIX 4.4 application).
 pub const CHAIN_FIXT11_FIX44: DictChain = &[FixVersion::Fixt11, FixVersion::Fix44];
 
+/// Chain for FIXT.1.1 sessions where `ApplVerID = 7` (FIX 5.0 application).
+pub const CHAIN_FIXT11_FIX50: DictChain = &[FixVersion::Fixt11, FixVersion::Fix50];
+
+/// Chain for FIXT.1.1 sessions where `ApplVerID = 8` (FIX 5.0SP1 application).
+pub const CHAIN_FIXT11_FIX50SP1: DictChain = &[FixVersion::Fixt11, FixVersion::Fix50Sp1];
+
 /// Look up a field by its tag number in a specific dictionary.
 pub fn field_by_tag(version: FixVersion, tag: u32) -> Option<FieldDef> {
     let def = match version {
         FixVersion::Fix44 => generated::fix44::field_by_tag(tag),
         FixVersion::Fixt11 => generated::fixt11::field_by_tag(tag),
+        FixVersion::Fix50 => generated::fix50::field_by_tag(tag),
+        FixVersion::Fix50Sp1 => generated::fix50sp1::field_by_tag(tag),
         FixVersion::Fix50Sp2 => generated::fix50sp2::field_by_tag(tag),
     }?;
     Some(FieldDef {
@@ -87,6 +99,8 @@ pub fn enum_value_label(version: FixVersion, tag: u32, value: &[u8]) -> Option<&
     match version {
         FixVersion::Fix44 => generated::fix44::enum_value_label(tag, value),
         FixVersion::Fixt11 => generated::fixt11::enum_value_label(tag, value),
+        FixVersion::Fix50 => generated::fix50::enum_value_label(tag, value),
+        FixVersion::Fix50Sp1 => generated::fix50sp1::enum_value_label(tag, value),
         FixVersion::Fix50Sp2 => generated::fix50sp2::enum_value_label(tag, value),
     }
 }
@@ -96,6 +110,8 @@ pub fn msg_type_label(version: FixVersion, value: &[u8]) -> Option<&'static str>
     match version {
         FixVersion::Fix44 => generated::fix44::msg_type_label(value),
         FixVersion::Fixt11 => generated::fixt11::msg_type_label(value),
+        FixVersion::Fix50 => generated::fix50::msg_type_label(value),
+        FixVersion::Fix50Sp1 => generated::fix50sp1::msg_type_label(value),
         FixVersion::Fix50Sp2 => generated::fix50sp2::msg_type_label(value),
     }
 }
@@ -121,12 +137,22 @@ pub fn chain_msg_type_label(chain: DictChain, value: &[u8]) -> Option<&'static s
 /// |-------------|-----------|-------------------------------|
 /// | `FIX.4.4`   | —         | [`CHAIN_FIX44`]               |
 /// | `FIXT.1.1`  | `6`       | [`CHAIN_FIXT11_FIX44`]        |
-/// | `FIXT.1.1`  | other/—   | [`CHAIN_FIXT11_FIX50SP2`]     |
+/// | `FIXT.1.1`  | `7`       | [`CHAIN_FIXT11_FIX50`]        |
+/// | `FIXT.1.1`  | `8`       | [`CHAIN_FIXT11_FIX50SP1`]     |
+/// | `FIXT.1.1`  | `9` / other / — | [`CHAIN_FIXT11_FIX50SP2`] |
 /// | other       | —         | [`CHAIN_FIX44`] (best-effort) |
+///
+/// ApplVerID numeric values follow QuickFIX conventions: `6`=FIX44,
+/// `7`=FIX50, `8`=FIX50SP1, `9`=FIX50SP2. Unknown or missing ApplVerID on
+/// a FIXT.1.1 session falls back to SP2 — the most common wire version
+/// today and a strict superset of older application dictionaries for the
+/// session-layer tags we care about.
 pub fn chain_for(begin_string: &[u8], appl_ver_id: Option<&[u8]>) -> DictChain {
     if begin_string == b"FIXT.1.1" {
         match appl_ver_id {
             Some(b"6") => CHAIN_FIXT11_FIX44,
+            Some(b"7") => CHAIN_FIXT11_FIX50,
+            Some(b"8") => CHAIN_FIXT11_FIX50SP1,
             _ => CHAIN_FIXT11_FIX50SP2,
         }
     } else {
@@ -142,6 +168,8 @@ pub const fn field_count(version: FixVersion) -> usize {
     match version {
         FixVersion::Fix44 => generated::fix44::FIELD_COUNT,
         FixVersion::Fixt11 => generated::fixt11::FIELD_COUNT,
+        FixVersion::Fix50 => generated::fix50::FIELD_COUNT,
+        FixVersion::Fix50Sp1 => generated::fix50sp1::FIELD_COUNT,
         FixVersion::Fix50Sp2 => generated::fix50sp2::FIELD_COUNT,
     }
 }
@@ -151,6 +179,8 @@ pub const fn message_count(version: FixVersion) -> usize {
     match version {
         FixVersion::Fix44 => generated::fix44::MESSAGE_COUNT,
         FixVersion::Fixt11 => generated::fixt11::MESSAGE_COUNT,
+        FixVersion::Fix50 => generated::fix50::MESSAGE_COUNT,
+        FixVersion::Fix50Sp1 => generated::fix50sp1::MESSAGE_COUNT,
         FixVersion::Fix50Sp2 => generated::fix50sp2::MESSAGE_COUNT,
     }
 }

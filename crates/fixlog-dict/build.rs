@@ -19,6 +19,8 @@ use quick_xml::events::Event;
 const DICTIONARIES: &[(&str, &str)] = &[
     ("fix44", "FIX44.xml"),
     ("fixt11", "FIXT11.xml"),
+    ("fix50", "FIX50.xml"),
+    ("fix50sp1", "FIX50SP1.xml"),
     ("fix50sp2", "FIX50SP2.xml"),
 ];
 
