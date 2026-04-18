@@ -61,6 +61,22 @@ enum Command {
         #[arg(short = 'F', long)]
         follow: bool,
     },
+    /// Open the log in an interactive TUI (ratatui + crossterm).
+    ///
+    /// Examples:
+    ///   fixlog tui file.log
+    ///   fixlog tui file.log --filter "35=D"
+    ///   fixlog tui live.log --follow
+    Tui {
+        /// Path to the log file.
+        file: PathBuf,
+        /// Optional initial filter (same grammar as `grep --filter`).
+        #[arg(long)]
+        filter: Option<String>,
+        /// Watch the file for growth/rotation and append new messages live.
+        #[arg(short = 'F', long)]
+        follow: bool,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -95,6 +111,11 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
+        Command::Tui {
+            file,
+            filter,
+            follow,
+        } => commands::tui::run(&file, filter, follow),
     }
 }
 
