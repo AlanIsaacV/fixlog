@@ -472,12 +472,11 @@ impl App {
     }
 
     fn iterate_search(&mut self, dir: Direction) {
-        let Some(text) = self.state.search_last_text.clone() else {
+        // `search_last` already holds the compiled expression — no need to
+        // re-parse from `search_last_text` (which is retained only for the
+        // status bar).
+        let Some(expr) = self.state.search_last.clone() else {
             self.state.status = StatusMessage::warn("no previous search");
-            return;
-        };
-        let Ok(expr) = parse_query(&text) else {
-            self.state.status = StatusMessage::error("previous search no longer parses");
             return;
         };
         let hit = search::next_match(&mut self.state, &expr, dir);

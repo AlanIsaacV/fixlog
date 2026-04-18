@@ -172,10 +172,12 @@ pub type DetailEntry = (u32, Result<ResolvedMessageOwned, String>);
 
 /// Snapshot of filter-affected state captured when the user enters command
 /// mode so we can restore it if the typed command is cancelled. Stores the
-/// filter *source text* rather than the compiled expression (which isn't
-/// `Clone`) — [`restore_filter`] re-parses on the way back.
+/// compiled filter expression alongside its source text so [`restore_filter`]
+/// doesn't have to re-parse on the way back — cloning a `QueryExpr` is now
+/// cheap (Arc-wrapped regex, see `fixlog-query/src/ast.rs`).
 #[derive(Debug, Clone)]
 pub struct FilterSnapshot {
+    pub filter: Option<QueryExpr>,
     pub filter_text: Option<String>,
     pub user_filter_text: Option<String>,
     pub hide_heartbeat: bool,
@@ -509,10 +511,11 @@ fn resolve_ordinal(
     Ok(ResolvedMessageOwned::from_resolved(resolve(&raw)))
 }
 
-/// Capture the state needed to revert a live filter preview. Clones only
-/// the filter *text* (the compiled expression is rebuilt on restore).
+/// Capture the state needed to revert a live filter preview. Clones the
+/// compiled expression too, so [`restore_filter`] can skip parsing.
 pub fn snapshot_filter(state: &AppState) -> FilterSnapshot {
     FilterSnapshot {
+        filter: state.filter.clone(),
         filter_text: state.filter_text.clone(),
         user_filter_text: state.user_filter_text.clone(),
         hide_heartbeat: state.hide_heartbeat,
@@ -540,12 +543,11 @@ pub fn apply_filter(state: &mut AppState, expr: Option<QueryExpr>, text: Option<
     state.refresh_detail_cache();
 }
 
-/// Restore a previous filter snapshot. Re-parses the stored text (which is
-/// known good because we wouldn't have committed it otherwise); if parsing
-/// somehow fails the filter is cleared rather than crashing.
+/// Restore a previous filter snapshot. The compiled expression is carried
+/// through directly (thanks to `QueryExpr: Clone`), so no re-parse is
+/// needed on the way back.
 pub fn restore_filter(state: &mut AppState, snap: FilterSnapshot) {
-    let expr = snap.filter_text.as_ref().and_then(|t| parse_query(t).ok());
-    state.filter = expr;
+    state.filter = snap.filter;
     state.filter_text = snap.filter_text;
     state.user_filter_text = snap.user_filter_text;
     state.hide_heartbeat = snap.hide_heartbeat;
