@@ -41,6 +41,26 @@ enum Command {
         /// Path to the log file.
         file: PathBuf,
     },
+    /// Filter messages with a simple DSL, grep-style.
+    ///
+    /// Examples:
+    ///   fixlog grep file.log --filter "35=D"
+    ///   fixlog grep file.log --filter "35=8 AND 55=AAPL"
+    ///   fixlog grep file.log --filter "55~^MS" --format json
+    ///   fixlog grep live.log --filter "35=3" --follow  # tail -f style
+    Grep {
+        /// Path to the log file.
+        file: PathBuf,
+        /// Filter expression (see crate fixlog-query for the grammar).
+        #[arg(long)]
+        filter: String,
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = ParseFormat::Pretty)]
+        format: ParseFormat,
+        /// Stream new messages as the file grows, like `tail -f`. Terminates on Ctrl+C.
+        #[arg(short = 'F', long)]
+        follow: bool,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -60,6 +80,21 @@ fn main() -> Result<()> {
             format,
         } => commands::parse::run(&file, first, format),
         Command::Stats { file } => commands::stats::run(&file),
+        Command::Grep {
+            file,
+            filter,
+            format,
+            follow,
+        } => {
+            let outcome = commands::grep::run(&file, &filter, format, follow)?;
+            // grep(1) exit convention: 0 if anything matched, 1 if nothing did. In follow
+            // mode the loop never returns normally (the process dies on SIGINT), so this
+            // path only runs when `--follow` wasn't passed.
+            if outcome.matched == 0 {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
     }
 }
 

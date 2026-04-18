@@ -1,6 +1,6 @@
 [package]
 name         = "fixlog-cli"
-version      = "0.1.0"
+version      = "0.2.0"
 edition.workspace      = true
 rust-version.workspace = true
 license.workspace      = true
@@ -17,5 +17,6 @@ fixlog-core       = { path = "../fixlog-core" }
 anyhow            = "1"
 clap              = { version = "4", features = ["derive"] }
 memmap2           = "0.9"
+notify            = "7"
 tracing           = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -34,7 +34,11 @@ pub fn run(path: &Path, first: Option<usize>, format: ParseFormat) -> Result<()>
     Ok(())
 }
 
-fn write_pretty<W: Write>(out: &mut W, msg: &ResolvedMessage<'_>, raw_len: usize) -> Result<()> {
+pub(crate) fn write_pretty<W: Write>(
+    out: &mut W,
+    msg: &ResolvedMessage<'_>,
+    raw_len: usize,
+) -> Result<()> {
     let header = match msg.msg_type_name {
         Some(name) => format!(" {name}"),
         None => String::new(),
@@ -87,7 +91,11 @@ fn write_pretty_field<W: Write>(
     Ok(())
 }
 
-fn write_jsonl<W: Write>(out: &mut W, msg: &ResolvedMessage<'_>, raw_len: usize) -> Result<()> {
+pub(crate) fn write_jsonl<W: Write>(
+    out: &mut W,
+    msg: &ResolvedMessage<'_>,
+    raw_len: usize,
+) -> Result<()> {
     write!(out, r#"{{"offset":{},"raw_len":{}"#, msg.offset, raw_len)?;
     if let Some(name) = msg.msg_type_name {
         out.write_all(br#","msg_type_name":""#)?;
