@@ -6,6 +6,10 @@
 
 **Fase 4 — Análisis avanzado** — **effectively complete** (P4-T01 through P4-T14, T16, T17 landed; T15 symbolic names deferred to Fase 5 by default). New crate `fixlog-analysis` implements session tracking, order lifecycle, temporal histogram. CLI gains `sessions` / `orders` / `histogram` subcommands. TUI gains sessions / orders / diff / marks / histogram overlays, bookmark set/jump (`m<letter>` / `'<letter>`), diff slots (`dd` / `dD`), and `:export` (csv/json/fix/pretty). Hot-tag pre-filter drops `tui_filter/apply_35eqD_1M` from ~477 ms to ~156 µs (~3000× speedup).
 
+**Fase A — TUI rediseño (inspirado en fixparser.targetcompid.com, 2026-04-18)** — **done, committed**. List columns `TIME | MESSAGE | CLIENT ORDER ID | STATUS | DETAIL`; `c` toggle for skipping common header/trailer tags in the detail panel; `H` toggle composing `AND NOT 35=0` through `recompute_effective_filter` + extended `FilterSnapshot`. TUI re-parse sites migrated to `parse_one_with_format` so pipe-separated logs resolve.
+
+**Fase B — TUI rediseño, riqueza semántica (2026-04-18)** — **done, committed**. New `summary` module with a per-MsgType table (D/8/F/G/3/j/A/5/0/1/2) producing `MessageSummary { badges, client_order_id, detail }`; unknown MsgTypes fall through to the generic Side/Qty/Symbol fallback. `list::build_line` consumes `summary::summarize` directly; duplicated helpers dropped. Panel focus extended: `AppState.detail_cursor` + `detail_fields_len` + `detail_cursor_field`; `j`/`k`/`g`/`G`/`Ctrl+D/U` in `Focus::Detail` move the per-field cursor (viewport auto-scrolls); the renderer highlights the cursor row. `Action::FilterFromDetail { negated }` bound to `f`/`x` composes `tag=value` / `NOT (tag=value)` into `user_filter_text` via `recompute_effective_filter`; bareword-vs-quoted value heuristic honours the DSL grammar.
+
 **Fase 3 — TUI básico (ratatui)** — **effectively complete**. All P3-T01..T16 landed. TUI renders <1 ms per frame on 1M messages (22× under the 16 ms budget); parser and index benches stable within noise. Integration tests cover bootstrap, navigation, command bar, search, yank, and follow watcher end-to-end.
 
 **Fase 2 — Indexación + Tailing + Query DSL** — effectively complete. P2-T01..T09 all landed; only P2-T10 (`fixlog index` subcommand with serialized cache) remains, and it's marked as optional/stretch in the plan — best deferred to Phase 5 alongside config persistence.
@@ -108,7 +112,7 @@ Fase 1 is closed (all T01-T16 done; T17 only informal sign-off).
 
 All green as of last run:
 
-- `cargo test --all` — 220 tests (was 189 at Fase 3 close; +31 from Fase 4).
+- `cargo test --all` — all green post-Fase B (Fase A +17, Fase B / summary +9, Fase B / focus +8 over Fase 4 baseline of 220).
   - parser: 12 unit + 3 synthetic + 2 with_format
   - format: 7 unit
   - dict: 4 unit + 7 integration
@@ -116,7 +120,7 @@ All green as of last run:
   - query: 18 unit + 6 new AST hot_equalities tests
   - analysis: 19 unit (sessions + orders + histogram + util) + 3 real_fixtures
   - cli: 3 grep unit + 2 histogram (duration parser) + 5 integration (grep + grep --follow)
-  - tui: 64 unit + 36 integration (bootstrap, command, navigation, search, yank) + 1 hot-tag correctness
+  - tui: 92 unit (includes Fase B summary unit tests) + 8 focus integration + display_toggles + horizontal_scroll + earlier bootstrap/command/navigation/search/yank + 1 hot-tag correctness
 - `cargo clippy --all-targets --all-features -- -D warnings` — clean.
 - `cargo fmt --all --check` — clean.
 

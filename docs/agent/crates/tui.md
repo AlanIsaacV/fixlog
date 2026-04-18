@@ -21,7 +21,8 @@ Library-only; the `fixlog tui` CLI subcommand is a thin wrapper over
 - `src/view/{list,detail,status,command,search}.rs` — main per-region renderers.
 - `src/view/{sessions,orders,diff,marks,histogram}.rs` — overlay renderers (Fase 4). Each paints a centered `Clear` + bordered widget over the main layout.
 - `src/export.rs` — `:export <fmt> <path>` writers (csv/json/fix/pretty).
-- `tests/{bootstrap,navigation,command,search,yank}.rs` — integration tests driving `App` with synthesised key events.
+- `src/summary.rs` — `MessageSummary` + `summarize(RawMessage, DictChain)` driving the list-column layout (Fase B). Hosts the per-MsgType table and the shared `lookup_tag` / `lookup_tag_string` / `format_qty` helpers.
+- `tests/{bootstrap,navigation,command,search,yank,display_toggles,horizontal_scroll,focus}.rs` — integration tests driving `App` with synthesised key events.
 - `benches/frame.rs` — frame budget + bootstrap + filter apply on 1M messages.
 
 ## Fase 4 additions — overlays, bookmarks, diff, export
@@ -130,6 +131,33 @@ Normal mode, 1 row in Command or Search. The row is shared; only one of
   falls through: the prefix is cleared and the action runs normally (raw
   mode toggles). This is the same fall-through used for any bound letter;
   currently only `r` removes a bookmark letter. The other 25 still work.
+
+## Summarizers (Fase B)
+
+`summary::summarize` projects a `RawMessage` into a `MessageSummary`
+that `view::list` renders directly. The table is hardcoded in
+`summary.rs` so `fixlog-parser` / `fixlog-dict` stay decoupled — the
+dictionary only resolves enum *labels*; the shape of the summary (which
+tags to pull, whether price belongs in DETAIL) is a TUI concern.
+
+| MsgType                     | Badges (STATUS column)          | Detail (DETAIL column)                  |
+|-----------------------------|---------------------------------|-----------------------------------------|
+| `D` NewOrderSingle          | —                               | `{Side} {OrderQty} {Symbol}[ @ {Price}]` |
+| `8` ExecutionReport         | `label(150)` · `label(39)`      | `{Side} {OrderQty} {Symbol}` (no price) |
+| `F` OrderCancelRequest      | —                               | `{Side} {OrderQty} {Symbol}`            |
+| `G` OrderCancelReplace      | —                               | `{Side} {OrderQty} {Symbol}[ @ {Price}]` |
+| `3` Reject / `j` BusinessReject | —                           | `text(58)` truncated to 60 chars + `…` |
+| `A`/`5`/`0`/`1`/`2`         | —                               | (empty — noise)                         |
+| other                       | —                               | Fallback to the generic `Side/Qty/Symbol` summary |
+
+`MessageSummary.client_order_id` centralises the tag-11 read so the list
+view doesn't duplicate the lookup. Labels are `Cow<'static, str>` —
+dictionary-resolved values return `Cow::Borrowed` with zero allocation;
+unknown enum values fall back to `Cow::Owned(String::from_utf8_lossy(...))`.
+
+Growth path: if the table outgrows ~20 rows or if a third consumer
+(`fixlog-cli`, `fixlog-render`) appears, promote the table into
+`fixlog-dict` as generated data. Today it's small and TUI-local.
 
 ## Display toggles (Fase A)
 
@@ -276,6 +304,8 @@ cursor.
 | `r`            | Toggle raw-FIX detail mode (wraps, full-width layout)    |
 | `Tab`          | Move focus to the next panel (List ↔ Detail)             |
 | `Shift+Tab`    | Move focus to the previous panel (same toggle today)     |
+| `f`            | (Focus::Detail) AND `tag=value` from the highlighted row into the filter |
+| `x`            | (Focus::Detail) AND `NOT (tag=value)` from the highlighted row into the filter |
 | `→` / `Right`  | Scroll the **focused** panel right by 8 columns          |
 | `←` / `Left`   | Scroll the **focused** panel left by 8 columns           |
 | `0`            | Reset all three scroll offsets (list h, detail h, detail v) |
@@ -285,12 +315,38 @@ arrows all respect `AppState.focus`:
 
 - `Focus::List` (default): `j`/`k` move the message cursor (historical
   behavior, also flips `ViewMode`); arrows scroll `list_h_offset`.
-- `Focus::Detail`: `j`/`k` scroll `detail_v_offset`; `g`→0, `G`→`u16::MAX`
-  (clamped by the resolved-mode renderer to the real last row); arrows
-  scroll `detail_h_offset`.
+- `Focus::Detail` (resolved mode, Fase B): `j`/`k` walk
+  `detail_cursor` — the per-field cursor used by `f`/`x`. The renderer
+  highlights the current row and auto-scrolls `detail_v_offset` to keep
+  the cursor in the viewport. `g` → top (0), `G` → bottom (`len-1`);
+  arrows scroll `detail_h_offset`.
+- `Focus::Detail` (raw mode): `j`/`k`/`g`/`G` scroll the wrapped
+  paragraph directly via `detail_v_offset` — there's no field cursor in
+  raw mode.
 
 In raw detail mode the list isn't rendered, so the nav dispatch forces
 the effective focus to `Detail` regardless of `state.focus`.
+
+### `f` / `x` — filter from detail cursor (Fase B)
+
+When `effective_focus == Detail`, `f` composes the row at `detail_cursor`
+into `user_filter_text` as `tag=value`; `x` does the same with
+`NOT (tag=value)`. Composition uses `AND` against the previous filter,
+then re-runs through `recompute_effective_filter` so `hide_heartbeat`
+survives. Raw byte values (not decoded labels) feed the predicate so the
+filter matches against the secondary index byte-for-byte.
+
+Value-quoting: ASCII-safe characters (alphanumerics, `_-./:+`) emit a
+bareword (`38=10000`); anything else emits a DSL-quoted string
+(`58="bad request"` with `"` and `\` escaped). Non-UTF-8 or control
+bytes abort with a status-bar warn.
+
+`f`/`x` from `Focus::List` flashes a reminder to Tab into the detail;
+they do not touch the filter.
+
+`toggle_skip_common` (`c`) clamps `detail_cursor` to `len - 1` when the
+filter shrinks the field list so the highlight and subsequent `f`/`x`
+never index off the end.
 
 Any cursor motion other than `G` drops the view out of `Follow` into
 `Browse`. `G` snaps to `Follow` and resets `new_since_browse`.
