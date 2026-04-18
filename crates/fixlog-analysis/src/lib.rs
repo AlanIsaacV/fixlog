@@ -14,6 +14,7 @@
 pub mod histogram;
 pub mod orders;
 pub mod sessions;
+pub mod util;
 
 use fixlog_core::ParseError;
 
