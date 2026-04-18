@@ -201,7 +201,7 @@ impl<'a> Parser<'a> {
                     at: value_at,
                     source: e,
                 })?;
-                Op::Re(rx)
+                Op::Re(std::sync::Arc::new(rx))
             }
         };
         // Silence unused warnings for the position locals in release builds — they're

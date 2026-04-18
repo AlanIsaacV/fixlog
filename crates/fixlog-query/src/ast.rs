@@ -3,21 +3,28 @@
 //! The evaluator lives in [`crate::eval`]. Keeping the AST separate makes it trivial to
 //! serialize or transform later (e.g. push-down to a secondary index).
 
+use std::sync::Arc;
+
 use fixlog_parser::RawMessage;
 
 /// Comparison operator inside a [`Predicate`].
-#[derive(Debug)]
+///
+/// `Op::Re` holds its `Regex` behind an [`Arc`] so the whole AST (`Op` →
+/// [`Predicate`] → [`Expr`]) can derive `Clone` cheaply. Cloning a regex
+/// otherwise requires re-compilation (≈ 100 µs for typical patterns); with
+/// `Arc` it's an atomic refcount bump.
+#[derive(Debug, Clone)]
 pub enum Op {
     /// `tag = value` — byte-exact equality.
     Eq,
     /// `tag != value` — logical inverse of `Eq`. Missing tag counts as "not equal".
     Ne,
     /// `tag ~ regex` — regex match on the raw tag value bytes.
-    Re(regex::bytes::Regex),
+    Re(Arc<regex::bytes::Regex>),
 }
 
 /// A single `tag <op> value` atom.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Predicate {
     pub tag: u32,
     pub op: Op,
@@ -26,7 +33,7 @@ pub struct Predicate {
 }
 
 /// Parsed filter expression.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expr {
     Pred(Predicate),
     Not(Box<Expr>),
@@ -120,5 +127,17 @@ mod tests {
     fn hot_equalities_rejects_regex() {
         let e = parse("55~^MS").unwrap();
         assert!(e.hot_equalities().is_none());
+    }
+
+    #[test]
+    fn expr_is_clone_even_when_it_contains_a_regex() {
+        // Clone is cheap for all variants — the regex sits behind an `Arc`,
+        // so cloning is a refcount bump rather than a re-compile. This is
+        // what `FilterSnapshot` and `search_last` rely on to stop
+        // re-parsing on every toggle / `n` / `N`.
+        fn assert_clone<T: Clone>(_: &T) {}
+        let e = parse("(55~^MS AND 35=D) OR NOT 35=0").unwrap();
+        assert_clone(&e);
+        let _ = e.clone();
     }
 }
