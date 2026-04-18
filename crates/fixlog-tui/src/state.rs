@@ -322,6 +322,13 @@ pub struct AppState {
     pub last_detail_height: usize,
     /// Which panel receives navigation keys. `Tab`/`Shift+Tab` toggles.
     pub focus: Focus,
+    /// Cursor row within the detail panel's *filtered* field list
+    /// (respects `skip_common`). Moved by `j`/`k` when `focus == Detail`.
+    /// Reset to 0 whenever the ordinal under the list cursor changes
+    /// (see [`AppState::refresh_detail_cache`]); clamped when toggling
+    /// `skip_common`. `f`/`x` build an equality/anti-equality filter
+    /// expression from the row it points at.
+    pub detail_cursor: usize,
 }
 
 impl AppState {
@@ -353,10 +360,45 @@ impl AppState {
             return;
         }
         // New message under the cursor: restart detail-panel vertical
-        // scroll so the user sees fields from the top.
+        // scroll so the user sees fields from the top, and reset the
+        // per-field cursor used by `f`/`x`.
         self.detail_v_offset = 0;
+        self.detail_cursor = 0;
         let entry = resolve_ordinal(&self.mmap, &self.index, &self.format, ord);
         self.detail_cache = Some((ord, entry));
+    }
+
+    /// Number of fields currently renderable in the detail panel, after
+    /// applying the `skip_common` filter. Source of truth for
+    /// `detail_cursor` clamping and `f`/`x` dispatch.
+    pub fn detail_fields_len(&self) -> usize {
+        self.detail_cache
+            .as_ref()
+            .and_then(|(_, r)| r.as_ref().ok())
+            .map(|r| {
+                r.fields
+                    .iter()
+                    .filter(|f| !self.skip_common || !crate::view::detail::is_common(f.tag))
+                    .count()
+            })
+            .unwrap_or(0)
+    }
+
+    /// Snapshot of the field under `detail_cursor`, returned as
+    /// `(tag, raw_value_bytes)`. Used by `f`/`x` to build a filter
+    /// expression. Returns `None` when the cache is empty or the cursor is
+    /// out of range.
+    pub fn detail_cursor_field(&self) -> Option<(u32, Vec<u8>)> {
+        let resolved = self
+            .detail_cache
+            .as_ref()
+            .and_then(|(_, r)| r.as_ref().ok())?;
+        let mut iter = resolved
+            .fields
+            .iter()
+            .filter(|f| !self.skip_common || !crate::view::detail::is_common(f.tag));
+        let f = iter.nth(self.detail_cursor)?;
+        Some((f.tag, f.value.clone()))
     }
 
     /// Adjust `viewport_top` so the cursor lies inside
@@ -441,6 +483,7 @@ pub fn bootstrap(path: &Path, initial_filter: Option<&str>) -> Result<AppState> 
         detail_v_offset: 0,
         last_detail_height: 0,
         focus: Focus::List,
+        detail_cursor: 0,
     };
     recompute_effective_filter(&mut state);
     // Bootstrap anchors to the end of `visible` in Follow mode.

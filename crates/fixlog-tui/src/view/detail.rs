@@ -9,13 +9,13 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, Wrap};
 
-use crate::state::{AppState, ResolvedMessageOwned};
+use crate::state::{AppState, Focus, ResolvedMessageOwned};
 
 /// Session-layer header and trailer tags. Hidden when `state.skip_common`
 /// is true so the payload is easier to scan.
-const COMMON_TAGS: &[u32] = &[8, 9, 10, 34, 35, 49, 52, 56];
+pub(crate) const COMMON_TAGS: &[u32] = &[8, 9, 10, 34, 35, 49, 52, 56];
 
-fn is_common(tag: u32) -> bool {
+pub(crate) fn is_common(tag: u32) -> bool {
     COMMON_TAGS.contains(&tag)
 }
 
@@ -61,6 +61,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let skip_common = state.skip_common;
     let detail_h_offset = state.detail_h_offset;
     let detail_v_offset = state.detail_v_offset;
+    let detail_cursor = state.detail_cursor;
+    let highlight = state.focus == Focus::Detail;
 
     let result: Option<RenderFieldsOutcome> = match &state.detail_cache {
         None => {
@@ -85,6 +87,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
             skip_common,
             detail_h_offset,
             detail_v_offset,
+            detail_cursor,
+            highlight,
         )),
     };
     if let Some(out) = result {
@@ -172,6 +176,7 @@ fn title_line(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_fields(
     frame: &mut Frame,
     area: Rect,
@@ -179,6 +184,8 @@ fn render_fields(
     skip_common: bool,
     h_offset: u16,
     requested_v_offset: u16,
+    detail_cursor: usize,
+    highlight_cursor: bool,
 ) -> RenderFieldsOutcome {
     let header = Row::new(vec!["tag", "name", "type", "raw", "decoded"])
         .style(Style::default().add_modifier(Modifier::BOLD));
@@ -205,16 +212,22 @@ fn render_fields(
 
     let rows: Vec<Row<'static>> = all
         .iter()
+        .enumerate()
         .skip(v_offset)
         .take(viewport_rows.max(1))
-        .map(|f| {
-            Row::new(vec![
+        .map(|(idx, f)| {
+            let row = Row::new(vec![
                 Cell::from(f.tag.to_string()),
                 Cell::from(f.name.unwrap_or("?")),
                 Cell::from(f.field_type.unwrap_or("-")),
                 Cell::from(h_scroll_str(&raw_value(&f.value), offset)),
                 Cell::from(h_scroll_str(f.value_label.unwrap_or(""), offset)),
-            ])
+            ]);
+            if highlight_cursor && idx == detail_cursor {
+                row.style(Style::default().add_modifier(Modifier::REVERSED))
+            } else {
+                row
+            }
         })
         .collect();
 

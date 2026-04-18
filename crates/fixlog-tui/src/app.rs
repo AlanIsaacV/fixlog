@@ -189,6 +189,14 @@ impl App {
             }
             Action::ToggleSkipCommon => {
                 self.state.skip_common = !self.state.skip_common;
+                // Clamp detail_cursor to the new filtered field count so
+                // highlight + `f`/`x` don't index past the end.
+                let len = self.state.detail_fields_len();
+                if len == 0 {
+                    self.state.detail_cursor = 0;
+                } else if self.state.detail_cursor >= len {
+                    self.state.detail_cursor = len - 1;
+                }
                 let msg = if self.state.skip_common {
                     "detail: common fields hidden"
                 } else {
@@ -249,7 +257,38 @@ impl App {
                 };
                 self.state.status = StatusMessage::info(label);
             }
+            Action::FilterFromDetail { negated } => self.filter_from_detail(negated),
         }
+    }
+
+    /// Build a filter predicate from the row currently highlighted in the
+    /// detail panel and compose it into `user_filter_text`. Only active
+    /// when `focus == Detail`; otherwise reports a warning. The predicate
+    /// is `tag=value` (or `NOT (tag=value)` when `negated`). Raw value
+    /// bytes are taken from the message — not the decoded label — so the
+    /// comparison matches byte-for-byte against the secondary index.
+    fn filter_from_detail(&mut self, negated: bool) {
+        if effective_focus(&self.state) != Focus::Detail {
+            self.state.status =
+                StatusMessage::warn("press Tab to focus detail, then f/x on a field");
+            return;
+        }
+        let Some((tag, value)) = self.state.detail_cursor_field() else {
+            self.state.status = StatusMessage::warn("no field under detail cursor");
+            return;
+        };
+        let Some(expr) = filter_expr_from_field(tag, &value, negated) else {
+            self.state.status =
+                StatusMessage::warn("cannot quote field value (contains unsafe bytes)");
+            return;
+        };
+        let new_user = match self.state.user_filter_text.take() {
+            Some(prev) if !prev.is_empty() => format!("({prev}) AND {expr}"),
+            _ => expr.clone(),
+        };
+        self.state.user_filter_text = Some(new_user);
+        recompute_effective_filter(&mut self.state);
+        self.state.status = StatusMessage::info(format!("filter: {expr}"));
     }
 
     fn set_diff_slot(&mut self, slot: usize) {
@@ -582,18 +621,84 @@ fn nav(state: &mut AppState, delta: MoveDelta) {
 }
 
 fn detail_scroll(state: &mut AppState, delta: MoveDelta) {
+    // When raw mode is on we don't have a field-level cursor; treat
+    // j/k/g/G as a plain paragraph scroll.
+    if state.raw_detail_mode {
+        let step = state.last_detail_height.max(1) / 2;
+        let current = state.detail_v_offset;
+        state.detail_v_offset = match delta {
+            MoveDelta::Delta(d) => signed_saturating_add(current, d),
+            MoveDelta::Top => 0,
+            MoveDelta::Bottom => u16::MAX,
+            MoveDelta::HalfPageDown => signed_saturating_add(current, step as i64),
+            MoveDelta::HalfPageUp => signed_saturating_add(current, -(step as i64)),
+        };
+        return;
+    }
+
+    // Resolved mode: move the per-field `detail_cursor`, then let the
+    // renderer auto-scroll `detail_v_offset` to keep it visible.
+    let field_count = state.detail_fields_len();
+    if field_count == 0 {
+        return;
+    }
+    let last = field_count - 1;
     let step = state.last_detail_height.max(1) / 2;
-    let current = state.detail_v_offset;
-    state.detail_v_offset = match delta {
-        MoveDelta::Delta(d) => signed_saturating_add(current, d),
+    state.detail_cursor = match delta {
+        MoveDelta::Delta(d) => offset_cursor(state.detail_cursor, d, last),
         MoveDelta::Top => 0,
-        // Let the renderer clamp `u16::MAX` down to the real last row
-        // based on field count — the dispatch doesn't know how many
-        // fields are in the cached message without re-parsing.
-        MoveDelta::Bottom => u16::MAX,
-        MoveDelta::HalfPageDown => signed_saturating_add(current, step as i64),
-        MoveDelta::HalfPageUp => signed_saturating_add(current, -(step as i64)),
+        MoveDelta::Bottom => last,
+        MoveDelta::HalfPageDown => offset_cursor(state.detail_cursor, step as i64, last),
+        MoveDelta::HalfPageUp => offset_cursor(state.detail_cursor, -(step as i64), last),
     };
+
+    // Bring `detail_cursor` into the viewport. `last_detail_height` is
+    // "viewport rows including header"; the renderer subtracts 1 for the
+    // table header, so data rows ≈ height - 1.
+    let data_rows = state.last_detail_height.saturating_sub(1).max(1);
+    let top = state.detail_v_offset as usize;
+    if state.detail_cursor < top {
+        state.detail_v_offset = state.detail_cursor as u16;
+    } else if state.detail_cursor >= top + data_rows {
+        state.detail_v_offset =
+            u16::try_from(state.detail_cursor + 1 - data_rows).unwrap_or(u16::MAX);
+    }
+}
+
+/// Build a filter predicate string from a `(tag, raw_value)` pair. Uses a
+/// bareword when the value is ASCII-safe (no whitespace, no DSL
+/// operators, no quote/backslash); otherwise emits a quoted string with
+/// `"` and `\\` escaped. Returns `None` if the value contains a byte that
+/// can't be represented in either form (NUL, control chars).
+fn filter_expr_from_field(tag: u32, value: &[u8], negated: bool) -> Option<String> {
+    // Reject control bytes and non-UTF-8; the DSL is string-oriented.
+    let text = std::str::from_utf8(value).ok()?;
+    if text.chars().any(|c| c.is_control() && c != ' ') {
+        return None;
+    }
+
+    let safe_bareword = !text.is_empty()
+        && text
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | ':' | '+'));
+    let predicate = if safe_bareword {
+        format!("{tag}={text}")
+    } else {
+        let escaped: String = text
+            .chars()
+            .flat_map(|c| match c {
+                '\\' => vec!['\\', '\\'],
+                '"' => vec!['\\', '"'],
+                c => vec![c],
+            })
+            .collect();
+        format!("{tag}=\"{escaped}\"")
+    };
+    if negated {
+        Some(format!("NOT ({predicate})"))
+    } else {
+        Some(predicate)
+    }
 }
 
 fn signed_saturating_add(base: u16, delta: i64) -> u16 {

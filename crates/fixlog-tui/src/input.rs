@@ -102,6 +102,13 @@ pub enum Action {
     /// only two panels today this is the same toggle as `FocusNext`, but
     /// the separate variant keeps room for a third panel later.
     FocusPrev,
+    /// `f` / `x` in Normal mode while `focus == Detail`: AND a
+    /// `tag=value` (or `NOT tag=value`) predicate into the effective
+    /// filter, taking `(tag, value)` from the row at `detail_cursor`.
+    /// Ignored when focus is on the list.
+    FilterFromDetail {
+        negated: bool,
+    },
 }
 
 pub fn map_event(ev: &Event, mode: InputMode) -> Action {
@@ -156,6 +163,8 @@ pub fn map_normal_key(k: &KeyEvent) -> Action {
         (KeyCode::Char('0'), KeyModifiers::NONE) => Action::ScrollHome,
         (KeyCode::Tab, _) => Action::FocusNext,
         (KeyCode::BackTab, _) => Action::FocusPrev,
+        (KeyCode::Char('f'), KeyModifiers::NONE) => Action::FilterFromDetail { negated: false },
+        (KeyCode::Char('x'), KeyModifiers::NONE) => Action::FilterFromDetail { negated: true },
         (KeyCode::Esc, _) => Action::OverlayClose,
         (KeyCode::Enter, _) => Action::OverlayApply,
         // Letter is only meaningful after m / ' prefix; let the app layer
@@ -249,14 +258,26 @@ mod tests {
     fn unbound_letter_keys_are_letter() {
         // Any ASCII alphabetic char without a dedicated binding emits
         // `Letter(c)` so mark-set / mark-jump sequences work. Non-letter
-        // keys stay `Action::None`.
+        // keys stay `Action::None`. `z` is unbound today.
         assert_eq!(
-            map_normal_key(&key(KeyCode::Char('x'), KeyModifiers::NONE)),
-            Action::Letter('x')
+            map_normal_key(&key(KeyCode::Char('z'), KeyModifiers::NONE)),
+            Action::Letter('z')
         );
         assert_eq!(
             map_normal_key(&key(KeyCode::Enter, KeyModifiers::NONE)),
             Action::OverlayApply
+        );
+    }
+
+    #[test]
+    fn f_and_x_map_to_filter_from_detail() {
+        assert_eq!(
+            map_normal_key(&key(KeyCode::Char('f'), KeyModifiers::NONE)),
+            Action::FilterFromDetail { negated: false }
+        );
+        assert_eq!(
+            map_normal_key(&key(KeyCode::Char('x'), KeyModifiers::NONE)),
+            Action::FilterFromDetail { negated: true }
         );
     }
 
