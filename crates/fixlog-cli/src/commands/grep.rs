@@ -20,8 +20,9 @@ use fixlog_core::{LogFormat, QueryExpr, parse_all_with_format, parse_query, reso
 use memmap2::Mmap;
 use notify::{EventKind, RecursiveMode, Watcher, event::ModifyKind};
 
+use fixlog_core::render::{write_jsonl, write_pretty};
+
 use crate::ParseFormat;
-use crate::commands::parse::{write_jsonl, write_pretty};
 use crate::io::{head, mmap_file};
 
 const SNIFF_WINDOW: usize = 64 * 1024;
