@@ -20,14 +20,13 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use fixlog_core::dict::{
-    CHAIN_FIX44, DictChain, chain_enum_value_label, chain_for, chain_msg_type_label,
-};
+use fixlog_core::dict::{CHAIN_FIX44, chain_for, chain_msg_type_label};
 use fixlog_core::parser::{
-    RawMessage, TAG_BEGIN_STRING, TAG_MSG_TYPE, TAG_SENDING_TIME, parse_one_with_format,
+    TAG_BEGIN_STRING, TAG_MSG_TYPE, TAG_SENDING_TIME, parse_one_with_format,
 };
 
 use crate::state::AppState;
+use crate::summary::{self, lookup_tag};
 use crate::theme;
 
 /// Fixed column widths (in visible columns, i.e. `chars().count()`).
@@ -40,23 +39,6 @@ const COL_CLORDID: usize = 18;
 const COL_STATUS: usize = 24;
 /// Space between columns.
 const COL_SEP: &str = " ";
-
-/// ClOrdID tag. Not re-exported from `parser` because it's an application-
-/// layer tag, not a session-layer one. Declared here to keep the list view
-/// self-contained.
-const TAG_CL_ORD_ID: u32 = 11;
-/// OrderQty tag.
-const TAG_ORDER_QTY: u32 = 38;
-/// OrdStatus tag (ExecutionReport/OrderCancelReject).
-const TAG_ORD_STATUS: u32 = 39;
-/// Price tag.
-const TAG_PRICE: u32 = 44;
-/// Side tag (BUY/SELL/…).
-const TAG_SIDE: u32 = 54;
-/// Symbol tag.
-const TAG_SYMBOL: u32 = 55;
-/// ExecType tag (ExecutionReport).
-const TAG_EXEC_TYPE: u32 = 150;
 
 pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     if area.height < 2 || area.width < 10 {
@@ -142,12 +124,9 @@ fn build_line(state: &AppState, i: usize) -> Line<'static> {
 
     let (time, message, clordid, status, detail, msg_type_raw) = match parsed.as_ref() {
         Some(m) => {
-            let mt_raw = lookup_tag_bytes(m, TAG_MSG_TYPE);
-            let begin = lookup_tag_bytes(m, TAG_BEGIN_STRING);
-            let chain = begin
-                .as_deref()
-                .map(|b| chain_for(b, None))
-                .unwrap_or(CHAIN_FIX44);
+            let mt_raw = lookup_tag(m, TAG_MSG_TYPE).map(|v| v.to_vec());
+            let begin = lookup_tag(m, TAG_BEGIN_STRING);
+            let chain = begin.map(|b| chain_for(b, None)).unwrap_or(CHAIN_FIX44);
             let message = mt_raw
                 .as_deref()
                 .and_then(|v| chain_msg_type_label(chain, v))
@@ -158,12 +137,19 @@ fn build_line(state: &AppState, i: usize) -> Line<'static> {
                         .map(|v| String::from_utf8_lossy(v).into_owned())
                 })
                 .unwrap_or_else(|| "?".into());
-            let time = lookup_tag_bytes(m, TAG_SENDING_TIME)
-                .map(|b| format_time(&b))
+            let time = lookup_tag(m, TAG_SENDING_TIME)
+                .map(format_time)
                 .unwrap_or_default();
-            let clordid = lookup_tag_string(m, TAG_CL_ORD_ID).unwrap_or_default();
-            let status = status_chips(m, mt_raw.as_deref(), chain);
-            let detail = detail_summary(m, chain);
+
+            let s = summary::summarize(m, chain);
+            let clordid = s.client_order_id.unwrap_or_default();
+            let status = s
+                .badges
+                .iter()
+                .map(|b| b.as_ref())
+                .collect::<Vec<_>>()
+                .join(" · ");
+            let detail = s.detail.unwrap_or_default();
             (time, message, clordid, status, detail, mt_raw)
         }
         None => (
@@ -214,120 +200,6 @@ fn pad_cell(s: &str, width: usize) -> String {
     }
 }
 
-/// Build the DETAIL column from Side (54), OrderQty (38), Symbol (55) and
-/// Price (44) when present. Format `"SIDE QTY SYMBOL @ PRICE"` — missing
-/// fields are omitted. `Side` resolves through the dictionary when
-/// possible (`BUY`, `SELL`, …); numeric quantities get a thousands
-/// separator.
-fn detail_summary(msg: &RawMessage<'_>, chain: DictChain) -> String {
-    let side = lookup_tag_bytes(msg, TAG_SIDE).map(|v| label_or_raw(chain, TAG_SIDE, &v));
-    let qty = lookup_tag_bytes(msg, TAG_ORDER_QTY).map(|v| format_number(&v));
-    let symbol = lookup_tag_string(msg, TAG_SYMBOL);
-    let price = lookup_tag_bytes(msg, TAG_PRICE).map(|v| String::from_utf8_lossy(&v).into_owned());
-
-    let mut parts: Vec<String> = Vec::new();
-    if let Some(s) = side {
-        parts.push(s);
-    }
-    if let Some(q) = qty {
-        parts.push(q);
-    }
-    if let Some(s) = symbol {
-        parts.push(s);
-    }
-    let mut out = parts.join(" ");
-    if let Some(p) = price {
-        if out.is_empty() {
-            out = format!("@ {p}");
-        } else {
-            out = format!("{out} @ {p}");
-        }
-    }
-    out
-}
-
-/// Insert thousands separators in an ASCII integer string. Leaves the
-/// decimal portion (if any) untouched. Non-digit leading characters
-/// (`-`, `+`) are preserved. Falls back to the raw text when bytes
-/// aren't valid UTF-8 digits.
-fn format_number(bytes: &[u8]) -> String {
-    let raw = String::from_utf8_lossy(bytes).into_owned();
-    // Split optional decimal.
-    let (int_part, frac) = match raw.find('.') {
-        Some(i) => (&raw[..i], Some(&raw[i..])),
-        None => (raw.as_str(), None),
-    };
-    // Preserve a leading sign.
-    let (sign, digits) = match int_part.strip_prefix('-') {
-        Some(r) => ("-", r),
-        None => match int_part.strip_prefix('+') {
-            Some(r) => ("+", r),
-            None => ("", int_part),
-        },
-    };
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return raw;
-    }
-    let len = digits.len();
-    let mut grouped = String::with_capacity(len + len / 3);
-    for (i, ch) in digits.chars().enumerate() {
-        if i != 0 && (len - i) % 3 == 0 {
-            grouped.push(',');
-        }
-        grouped.push(ch);
-    }
-    let mut out =
-        String::with_capacity(sign.len() + grouped.len() + frac.map(|s| s.len()).unwrap_or(0));
-    out.push_str(sign);
-    out.push_str(&grouped);
-    if let Some(f) = frac {
-        out.push_str(f);
-    }
-    out
-}
-
-/// Status chips for ExecutionReport (35=8): `ExecType · OrdStatus`, each
-/// rendered as its dictionary label (falling back to the raw byte value
-/// when the label is unknown).
-///
-/// Other message types get an empty string for now — OrderCancelReject (35=9)
-/// also carries `OrdStatus` but is out of scope for this iteration.
-fn status_chips(msg: &RawMessage<'_>, msg_type: Option<&[u8]>, chain: DictChain) -> String {
-    if msg_type != Some(b"8") {
-        return String::new();
-    }
-    let exec_type =
-        lookup_tag_bytes(msg, TAG_EXEC_TYPE).map(|v| label_or_raw(chain, TAG_EXEC_TYPE, &v));
-    let ord_status =
-        lookup_tag_bytes(msg, TAG_ORD_STATUS).map(|v| label_or_raw(chain, TAG_ORD_STATUS, &v));
-    match (exec_type, ord_status) {
-        (Some(e), Some(o)) => format!("{e} · {o}"),
-        (Some(e), None) => e,
-        (None, Some(o)) => o,
-        (None, None) => String::new(),
-    }
-}
-
-fn label_or_raw(chain: DictChain, tag: u32, value: &[u8]) -> String {
-    chain_enum_value_label(chain, tag, value)
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| String::from_utf8_lossy(value).into_owned())
-}
-
-fn lookup_tag_bytes(msg: &RawMessage<'_>, tag: u32) -> Option<Vec<u8>> {
-    msg.tags
-        .iter()
-        .find(|(t, _)| *t == tag)
-        .map(|(_, v)| v.to_vec())
-}
-
-fn lookup_tag_string(msg: &RawMessage<'_>, tag: u32) -> Option<String> {
-    msg.tags
-        .iter()
-        .find(|(t, _)| *t == tag)
-        .map(|(_, v)| String::from_utf8_lossy(v).into_owned())
-}
-
 /// Extract `HH:MM:SS` from a `SendingTime` (tag 52) value formatted as
 /// `YYYYMMDD-HH:MM:SS[.sss]`. Returns the input unchanged if the shape is
 /// not recognised — the list stays readable even on exotic timestamps.
@@ -355,27 +227,6 @@ mod tests {
 
     fn fixture(name: &str) -> PathBuf {
         PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/real")).join(name)
-    }
-
-    #[test]
-    fn format_number_inserts_thousands_separators() {
-        assert_eq!(format_number(b"10000"), "10,000");
-        assert_eq!(format_number(b"1000000"), "1,000,000");
-        assert_eq!(format_number(b"100"), "100");
-        assert_eq!(format_number(b"1"), "1");
-        assert_eq!(format_number(b"-12345"), "-12,345");
-    }
-
-    #[test]
-    fn format_number_preserves_decimal_portion() {
-        assert_eq!(format_number(b"10000.25"), "10,000.25");
-        assert_eq!(format_number(b"1234.5"), "1,234.5");
-    }
-
-    #[test]
-    fn format_number_passes_through_non_numeric() {
-        assert_eq!(format_number(b"abc"), "abc");
-        assert_eq!(format_number(b""), "");
     }
 
     #[test]
