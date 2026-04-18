@@ -486,7 +486,9 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
+ "fixlog-analysis",
  "fixlog-core",
+ "fixlog-tui",
  "memmap2",
  "notify",
  "tracing",
