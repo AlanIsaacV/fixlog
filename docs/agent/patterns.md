@@ -261,10 +261,10 @@ Accessor functions that need to feed `const { assert!(...) }` must themselves be
 
 The TUI uses a single `AppState.overlay: Option<Overlay>` field — at
 most one overlay active at a time. Each overlay variant carries its own
-local state (e.g. `Sessions { map, cursor }`). The render layer draws
-overlays last so they stack over the main list/detail layout; each view
-paints a centered `ratatui::widgets::Clear` over its rect to avoid
-bleed-through.
+local state (e.g. `Sessions { map, cursor }`, `Orders { timeline, cursor }`,
+`Marks { cursor }`, `Help { scroll }`). The render layer draws overlays
+last so they stack over the main list/detail layout; each view paints a
+centered `ratatui::widgets::Clear` over its rect to avoid bleed-through.
 
 `App::overlay_intercept` runs before the main action dispatch when an
 overlay is open: it routes `j`/`k`/`Enter`/`Esc` to overlay-local
@@ -273,15 +273,58 @@ handlers and lets everything else fall through so global keys (`q`,
 `Overlay`, (2) create `view/<name>.rs`, (3) render it in `draw()`,
 (4) wire it into `overlay_intercept` for navigation/commit.
 
+### Navigable-overlay pattern (Sessions / Orders / Marks)
+
+All three follow the same shape. Use it for any new overlay that
+presents a selectable list:
+
+1. **State**: add `cursor: usize` to the overlay variant. Initialise to
+   `0` where the overlay is opened (see `command::open_orders_overlay`,
+   the `:marks` handler, etc.).
+2. **Navigation**: extend the `CursorDown | CursorUp`,
+   `CursorHalfPageDown | CursorHalfPageUp`, and `CursorTop | CursorBottom`
+   arms of `overlay_intercept`. Clamp to `[0, len - 1]`; on empty lists,
+   return `true` without touching anything (no crash when the overlay
+   renders a placeholder).
+3. **Commit**: `Action::OverlayApply` (bound to `Enter` in Normal mode)
+   dispatches to a dedicated method — `apply_session_filter` /
+   `jump_to_orders_selection` / `jump_to_marks_selection`. Jump helpers
+   share a shape:
+   ```rust
+   let Some(Overlay::Marks { cursor }) = self.state.overlay else { return };
+   /* resolve the selected row → target ordinal */
+   if let Some(idx) = self.state.visible.iter().position(|&o| o == target) {
+       self.state.cursor = idx;
+       self.state.mode = ViewMode::Browse;
+       self.state.overlay = None;
+       self.state.status = StatusMessage::info(...);
+   } else {
+       self.state.status = StatusMessage::warn("... hidden by current filter — clear filter to see it");
+   }
+   ```
+   If the ordinal is filtered out of `visible`, **warn without closing**
+   so the user can decide whether to clear the filter; do not silently
+   rewrite the filter.
+4. **Render**: use `ratatui::widgets::TableState::default().select(cursor)`
+   + `render_stateful_widget` (Orders) or a `Paragraph` with manual
+   `patch_style(REVERSED)` on the selected line (Marks). The Marks
+   overlay shares the exact list schema by pulling `header_line()`,
+   `build_line_for_ord(state, ord)`, and the `COL_*` / `pad_cell`
+   helpers from `view::list` as `pub(crate)` exports — prefer that over
+   duplicating column math.
+
 ## Multi-key sequences via `pending_prefix`
 
 `AppState.pending_prefix: Option<char>` buffers the first key of a
 two-character sequence. Currently used by:
 
 - `yy` / `yY` — yank raw / yank pretty.
-- `dd` / `dD` — set diff slot A / B.
-- `m<letter>` — set bookmark.
-- `'<letter>` — jump to bookmark.
+- `dd` — set diff slot A. Diff slot B opens via `dD` (4-key) **or** a
+  bare `D` after `dd` has already set slot A (3-key). See `DiffSlotB`
+  handler — it checks `diff_slots[0].is_some()` so a stray `D`
+  completes the diff instead of warning when the user clearly meant it.
+- `m<digit>` — set bookmark (0..9 only).
+- `'<digit>` — jump to bookmark.
 
 The dispatch shape in `App::apply`:
 
@@ -301,6 +344,33 @@ left over. If the completion is invalid, the fresh action is handled
 normally as if no prefix had been pending. This avoids mode-like state
 that could strand the user without a visual cue.
 
+### Digit-priority routing (marks)
+
+Marks accept digits only (`m0`..`m9`, `'0`..`'9`) so an accidental
+letter keystroke never silently triggers a dedicated shortcut under a
+mark prefix. But `0` has a dedicated binding (`ScrollHome`), so the
+naïve flow would turn `m0` into `ScrollHome`.
+
+Fix: when `pending_prefix == Some('m' | '\'')` in Normal mode,
+`App::on_event` routes events through `input::map_event_digit_priority`
+instead of `map_event`. The variant promotes any ASCII digit to
+`Action::Letter(c)` *before* falling back to `map_normal_key`; letters
+still go through `map_normal_key` unchanged, so a stray letter drops
+the prefix and runs its own shortcut instead of being silently
+consumed.
+
+```rust
+let action = match (self.state.pending_prefix, self.state.input_mode) {
+    (Some('m'), InputMode::Normal) | (Some('\''), InputMode::Normal) => {
+        map_event_digit_priority(ev)
+    }
+    _ => map_event(ev, self.state.input_mode),
+};
+```
+
+`set_bookmark` / `jump_bookmark` still validate `is_ascii_digit()` —
+defense in depth for any future caller that invokes them directly.
+
 ## Analysis builders over `LogIndex`
 
 Any new analyzer in `fixlog-analysis` should follow the same shape as
@@ -310,7 +380,7 @@ Any new analyzer in `fixlog-analysis` should follow the same shape as
 pub fn build(index: &LogIndex, buf: &[u8], format: &LogFormat) -> Self {
     for ord in 0..index.len() {
         let Some(bytes) = index.message_bytes(buf, ord) else { continue };
-        let Ok((msg, _)) = parse_one(bytes) else { continue };
+        let Ok((msg, _)) = parse_one_with_format(bytes, format) else { continue };
         // … use util::find_tag(&msg, T) / util::parse_sending_time(...) …
     }
     …
@@ -319,10 +389,39 @@ pub fn build(index: &LogIndex, buf: &[u8], format: &LogFormat) -> Self {
 
 - Re-parse lazily from mmap; never store `&[u8]` references across the
   mmap boundary. Materialize via `Vec<u8>` / `SmallVec<[u8; N]>`.
-- Skip messages that fail `parse_one` silently (warn + skip is the
-  library-wide contract).
+- Skip messages that fail `parse_one_with_format` silently (warn + skip
+  is the library-wide contract).
 - If the analyzer needs hot-tag lookup, check
   `index.secondary.has_tag(tag)` before trusting `lookup`.
+
+### Narrow tag extraction for single-tag hot paths
+
+If the analyzer only needs **one** tag per message (e.g. `Histogram`
+only reads tag 52 / SendingTime), skip the full tokenizer and use
+`util::extract_tag_raw(bytes, format, tag) -> Option<&[u8]>` instead.
+It scans `tag=value<sep>` pairs left-to-right and short-circuits on
+the first match — O(tag_position) instead of O(n_tags × parse).
+
+Coupled with `rayon::into_par_iter` over `0..index.len()`, this gave
+`Histogram::build` a 94% runtime cut on 1M messages (573 ms → 32 ms).
+The pattern:
+
+```rust
+let results: Vec<Option<u128>> = (0..index.len())
+    .into_par_iter()
+    .map(|ord| {
+        let bytes = index.message_bytes(buf, ord)?;
+        let raw = extract_tag_raw(bytes, format, TAG_SENDING_TIME)?;
+        parse_sending_time(raw).and_then(system_time_to_nanos)
+    })
+    .collect();
+// single sequential fold collects min/max/drops alongside the vec.
+```
+
+Only worth it when: (1) exactly one tag needed, (2) many messages, and
+(3) you can express the post-processing as a per-ordinal map. For
+multi-tag needs, keep `parse_one_with_format` — the extractor would
+scan the body once per tag requested and compound the cost.
 
 ## Hot-tag pushdown
 

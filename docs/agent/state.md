@@ -14,6 +14,21 @@
 
 **Docs refresh (2026-04-19)** — **done, uncommitted**. README expanded with Fase 4 / A / B / 5 surface: new `sessions` / `orders` / `histogram` CLI sections, full TUI keybinding / command / overlay / two-key-sequence tables, detail-panel navigation docs, hot-tag performance row, FIX 5.0 / SP1 in the supported-versions table. New `:help` overlay (`crates/fixlog-tui/src/view/help.rs` + `Overlay::Help { scroll }`) replaces the single-line status message; supports `j`/`k`/`Ctrl+D/U`/`g`/`G` scrolling via `app::overlay_intercept`, closes on `Esc`. 6 integration tests in `crates/fixlog-tui/tests/help.rs`. `docs/PHASE5_PLAN.md` created.
 
+**UX polish pass (2026-04-19)** — **5 fixes + 2 derived overlay rewrites landed this session**.
+
+1. **Histogram perf — 94% faster.** `Histogram::build` now parallelizes the timestamp extraction pass over `rayon::into_par_iter` and uses a new narrow scan helper `util::extract_tag_raw(bytes, format, tag)` that short-circuits on the first match instead of tokenising the whole message via `parse_one_with_format`. Min/max/drop-count/timestamp collection fold into a single sequential pass over the parallel results — no separate `.iter().min()/.max()` scans, no intermediate Vec of parsed messages. `analysis/histogram_build_1M` went from ~573 ms to ~32 ms (−94%, bench-confirmed). `rayon` added as a dep of `fixlog-analysis`.
+2. **`:orders` follows OrigClOrdID.** `OrderTimeline::build` now operates on a worklist over the family of ClOrdIDs reachable through tag 41 (OrigClOrdID), iterating to fixed point so `A → B → C` replacement chains surface via a single query. Tag 41 is indexed as a new hot tag (`TAG_ORIG_CL_ORD_ID`; added to `HotTags::default_set`). `OrderEvent` also exposes `last_px: Option<SmallVec<[u8; 16]>>` (tag 31, LastPx). 2 new unit tests: `cancel_request_without_order_id_is_included`, `replace_chain_is_followed_transitively`.
+3. **TUI — `?` opens `:help`.** New `Action::OpenHelp` mapped from `KeyCode::Char('?')` (any modifier) in Normal mode; handler opens `Overlay::Help { scroll: 0 }` directly without going through command mode.
+4. **TUI — 3-key `dd` + `D` diff.** Pressing `D` (shift-d, no prior `d` prefix) now opens the diff overlay if slot A is already set, so `dd` then `D` works as a 3-keystroke sequence. The 4-keystroke `dd` + `dD` path still works via the existing pending-prefix arm. Error text tightened to `"press dd to set diff slot A first"` when neither slot is set.
+5. **TUI — marks restricted to digits 0–9.** `m<letter>` and `'<letter>` replaced by `m<digit>` / `'<digit>`. When `pending_prefix` is `m` or `'`, `on_event` routes through the new `map_event_digit_priority` instead of `map_event`: ASCII digits become `Action::Letter(c)` regardless of dedicated bindings (notably `0` → `ScrollHome` is shadowed for the duration of the prefix), and letters fall through to their normal shortcuts so an accidental follow-up keypress can never silently mis-set a mark on the wrong character. `set_bookmark`/`jump_bookmark` validate `is_ascii_digit()` and warn on anything else.
+
+**Derived overlay rewrites (2026-04-19)** — same session:
+
+6. **Orders overlay — navigable with timestamps + lastPx.** `Overlay::Orders` gained a `cursor: usize`; `overlay_intercept` routes `j`/`k`, `Ctrl+D`/`Ctrl+U`, `g`/`G` to move the cursor, and `Enter` calls `jump_to_orders_selection()` which closes the overlay and moves the main cursor to `events[cursor].ordinal` (warns without closing if that ordinal is filtered out of `visible`). The event table column layout changed from `ord | type | exec | status | cum-qty` to `time | type | exec | status | cum-qty | last-px`: the original ordinal column carried no user value, so we replaced it with `SystemTime` formatted as `YYYY-MM-DD HH:MM:SS` (UTC) via a local `civil_from_days` helper (inverse of Hinnant's civil-from-days) — no new date dep. Selected row highlight: `▶ ` prefix + dark-gray background. 2 new unit tests in `view/orders.rs`.
+7. **Marks overlay — same columns as the list.** `view/marks.rs` was `letter | ordinal | preview`; now it renders the full list schema (`time | message | client order id | status | detail`) prefixed by a short `mark` column. Achieved by promoting `COL_TIME`, `COL_MESSAGE`, `COL_CLORDID`, `COL_STATUS`, `COL_SEP`, `header_line`, and a new ordinal-driven `build_line_for_ord(state, ord)` (extracted from the old `build_line`) to `pub(crate)` in `view/list.rs`. `Overlay::Marks { cursor }` gained the same navigation surface as Orders with `jump_to_marks_selection()` applied on `Enter`. Help overlay updated to read `m<0-9>` / `'<0-9>`.
+
+All gates green: `cargo test --all` (229 tests), `cargo clippy --all-targets --all-features -- -D warnings`, `cargo fmt --all`. Bench: `analysis/histogram_build_1M: [30.838 ms 32.310 ms 32.986 ms] change: [-94.819% -94.215% -93.555%]`.
+
 **Fase 3 — TUI básico (ratatui)** — **effectively complete**. All P3-T01..T16 landed. TUI renders <1 ms per frame on 1M messages (22× under the 16 ms budget); parser and index benches stable within noise. Integration tests cover bootstrap, navigation, command bar, search, yank, and follow watcher end-to-end.
 
 **Fase 2 — Indexación + Tailing + Query DSL** — effectively complete. P2-T01..T09 all landed; only P2-T10 (`fixlog index` subcommand with serialized cache) remains, and it's marked as optional/stretch in the plan — best deferred to Phase 5 alongside config persistence.
@@ -186,7 +201,7 @@ Run: `cargo bench -p fixlog-analysis --bench analysis`. Machine: Darwin 25.3.0.
 |-------|------|--------|--------|
 | `analysis/session_build_1M` | ~1.16 s | <1 s | slight miss (single-sample `--quick`); full run should land closer |
 | `analysis/order_lookup_1M` (real fix44-om) | ~5 µs | <50 ms | ~9000× under — secondary lookup is O(events in chain) |
-| `analysis/histogram_build_1M` | ~500 ms | <500 ms | at target; dominated by `parse_sending_time` |
+| `analysis/histogram_build_1M` | ~32 ms | <500 ms | **2026-04-19**: rewritten with rayon + narrow tag extract; was ~573 ms pre-rewrite |
 
 ## What's next, ordered by value
 
