@@ -33,12 +33,15 @@ use crate::theme;
 /// `DETAIL_MIN` is the minimum; the column can extend past the viewport
 /// width when the row content is long, and horizontal scroll reveals the
 /// overflow.
-const COL_TIME: usize = 9;
-const COL_MESSAGE: usize = 22;
-const COL_CLORDID: usize = 18;
-const COL_STATUS: usize = 24;
+///
+/// Exposed to `view::marks` so the bookmarks overlay renders the same
+/// semantic columns as the main list.
+pub(crate) const COL_TIME: usize = 9;
+pub(crate) const COL_MESSAGE: usize = 22;
+pub(crate) const COL_CLORDID: usize = 18;
+pub(crate) const COL_STATUS: usize = 24;
 /// Space between columns.
-const COL_SEP: &str = " ";
+pub(crate) const COL_SEP: &str = " ";
 
 pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     if area.height < 2 || area.width < 10 {
@@ -75,7 +78,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let end = (state.viewport_top + content_height).min(state.visible.len());
     let lines: Vec<Line<'static>> = (state.viewport_top..end)
         .map(|i| {
-            let line = build_line(state, i);
+            let line = build_line_for_ord(state, state.visible[i]);
             if i == state.cursor {
                 line.patch_style(Style::default().add_modifier(Modifier::REVERSED))
             } else {
@@ -88,7 +91,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &mut AppState) {
     frame.render_widget(body, body_area);
 }
 
-fn header_line() -> Line<'static> {
+pub(crate) fn header_line() -> Line<'static> {
     let style = Style::default().add_modifier(Modifier::BOLD);
     Line::from(vec![
         Span::styled(pad_cell("time", COL_TIME), style),
@@ -103,8 +106,13 @@ fn header_line() -> Line<'static> {
     ])
 }
 
-fn build_line(state: &AppState, i: usize) -> Line<'static> {
-    let ord = state.visible[i] as usize;
+/// Render a single row by `visible`-index (used by the main list).
+///
+/// `i` is an index into `state.visible`; see
+/// [`build_line_for_ord`] for the ordinal-driven variant used by the
+/// bookmarks overlay where filtered-out ordinals must still render.
+pub(crate) fn build_line_for_ord(state: &AppState, ord_u32: u32) -> Line<'static> {
+    let ord = ord_u32 as usize;
     if state.index.messages.get(ord).is_none() {
         return Line::from(vec![
             Span::raw(pad_cell("-", COL_TIME)),
@@ -184,7 +192,7 @@ fn build_line(state: &AppState, i: usize) -> Line<'static> {
 
 /// Pad (or truncate) `s` to exactly `width` display columns, counted by
 /// `chars()`. Truncation prefers keeping the prefix.
-fn pad_cell(s: &str, width: usize) -> String {
+pub(crate) fn pad_cell(s: &str, width: usize) -> String {
     let count = s.chars().count();
     if count == width {
         s.to_string()

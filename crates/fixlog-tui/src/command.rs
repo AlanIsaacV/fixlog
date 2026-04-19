@@ -140,7 +140,7 @@ pub(crate) fn open_orders_overlay(state: &mut AppState, id: Option<&str>) {
             let n = tl.events.len();
             state.overlay = Some(Overlay::Orders {
                 timeline: tl,
-                scroll: 0,
+                cursor: 0,
             });
             state.status = StatusMessage::info(format!("timeline: {n} events"));
         }
@@ -216,7 +216,7 @@ pub fn execute(state: &mut AppState, cmd: Command) -> Outcome {
             Outcome::Continue
         }
         Command::Marks => {
-            state.overlay = Some(Overlay::Marks);
+            state.overlay = Some(Overlay::Marks { cursor: 0 });
             Outcome::Continue
         }
         Command::Histogram(bucket) => {

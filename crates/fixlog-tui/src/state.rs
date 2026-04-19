@@ -200,10 +200,17 @@ pub enum Overlay {
     },
     Orders {
         timeline: OrderTimeline,
-        scroll: usize,
+        /// Selected row in the event table. `Enter` jumps the main
+        /// cursor to `timeline.events[cursor].ordinal` and closes the
+        /// overlay. `j`/`k` move this cursor within the table.
+        cursor: usize,
     },
     Diff,
-    Marks,
+    Marks {
+        /// Selected row in the sorted bookmarks list. `Enter` jumps the
+        /// main cursor to the bookmark's ordinal and closes the overlay.
+        cursor: usize,
+    },
     Histogram {
         histogram: Histogram,
         width: usize,

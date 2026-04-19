@@ -10,7 +10,7 @@ use crate::TuiConfig;
 use crate::clipboard;
 use crate::command::{self, Outcome};
 use crate::event::Event;
-use crate::input::{Action, map_event};
+use crate::input::{Action, map_event, map_event_digit_priority};
 use crate::search::{self, Direction, Hit};
 use crate::state::{
     AppState, Focus, InputMode, Overlay, StatusMessage, ViewMode, bootstrap,
@@ -37,7 +37,17 @@ impl App {
 
     /// Dispatch one event: map it to an [`Action`] and apply it.
     pub fn on_event(&mut self, ev: &Event) {
-        let action = map_event(ev, self.state.input_mode);
+        // While a `m` or `'` prefix is pending in Normal mode, route any
+        // ASCII digit to `Letter(_)` so `m0`..`m9` and `'0`..`'9` always
+        // complete regardless of dedicated bindings (notably `0` →
+        // `ScrollHome`). Letters fall through to their regular actions
+        // so an accidental keystroke never silently mis-sets a mark.
+        let action = match (self.state.pending_prefix, self.state.input_mode) {
+            (Some('m'), InputMode::Normal) | (Some('\''), InputMode::Normal) => {
+                map_event_digit_priority(ev)
+            }
+            _ => map_event(ev, self.state.input_mode),
+        };
         self.apply(action);
     }
 
@@ -163,8 +173,16 @@ impl App {
                 self.state.status = StatusMessage::warn("press dd to set diff slot A");
             }
             Action::DiffSlotB => {
-                // Bare `D` without a prior `d` is meaningless here.
-                self.state.status = StatusMessage::warn("press dD after dd to open diff");
+                // `D` without a prior `d` prefix is still useful: if slot
+                // A is already set (from a previous `dd`), treat it as
+                // the completion that sets slot B and opens the diff.
+                // The 4-key path `dd` + `dD` still works via the prefix
+                // arm above.
+                if self.state.diff_slots[0].is_some() {
+                    self.set_diff_slot(1);
+                } else {
+                    self.state.status = StatusMessage::warn("press dd to set diff slot A first");
+                }
             }
             Action::MarkPrefix => {
                 self.state.pending_prefix = Some('m');
@@ -174,6 +192,9 @@ impl App {
             }
             Action::Letter(_) => {
                 // Only meaningful as a completion for m / ' — handled above.
+            }
+            Action::OpenHelp => {
+                self.state.overlay = Some(Overlay::Help { scroll: 0 });
             }
             Action::OverlayClose => {
                 if self.state.overlay.is_some() {
@@ -311,7 +332,8 @@ impl App {
     }
 
     fn set_bookmark(&mut self, c: char) {
-        if !c.is_ascii_alphabetic() {
+        if !c.is_ascii_digit() {
+            self.state.status = StatusMessage::warn("marks accept digits 0-9 only");
             return;
         }
         if self.state.visible.is_empty() {
@@ -324,6 +346,10 @@ impl App {
     }
 
     fn jump_bookmark(&mut self, c: char) {
+        if !c.is_ascii_digit() {
+            self.state.status = StatusMessage::warn("marks accept digits 0-9 only");
+            return;
+        }
         let Some(&ord) = self.state.bookmarks.get(&c) else {
             self.state.status = StatusMessage::warn(format!("mark '{c}' not set"));
             return;
@@ -362,6 +388,28 @@ impl App {
                     };
                     return true;
                 }
+                if let Some(Overlay::Orders { timeline, cursor }) = &mut self.state.overlay {
+                    let len = timeline.events.len();
+                    if len == 0 {
+                        return true;
+                    }
+                    *cursor = match action {
+                        Action::CursorDown => (*cursor + 1).min(len - 1),
+                        _ => cursor.saturating_sub(1),
+                    };
+                    return true;
+                }
+                if let Some(Overlay::Marks { cursor }) = &mut self.state.overlay {
+                    let len = self.state.bookmarks.len();
+                    if len == 0 {
+                        return true;
+                    }
+                    *cursor = match action {
+                        Action::CursorDown => (*cursor + 1).min(len - 1),
+                        _ => cursor.saturating_sub(1),
+                    };
+                    return true;
+                }
                 if let Some(Overlay::Help { scroll }) = &mut self.state.overlay {
                     *scroll = match action {
                         Action::CursorDown => scroll.saturating_add(1),
@@ -369,12 +417,36 @@ impl App {
                     };
                     return true;
                 }
-                // Orders / Histogram / Marks / Diff: no intra-overlay nav
+                // Histogram / Diff: no intra-overlay nav
                 // wired yet; let the action through so the main list still
                 // responds (though visually the overlay hides it).
                 false
             }
             Action::CursorHalfPageDown | Action::CursorHalfPageUp => {
+                if let Some(Overlay::Orders { timeline, cursor }) = &mut self.state.overlay {
+                    let len = timeline.events.len();
+                    if len == 0 {
+                        return true;
+                    }
+                    const STEP: usize = 10;
+                    *cursor = match action {
+                        Action::CursorHalfPageDown => (*cursor + STEP).min(len - 1),
+                        _ => cursor.saturating_sub(STEP),
+                    };
+                    return true;
+                }
+                if let Some(Overlay::Marks { cursor }) = &mut self.state.overlay {
+                    let len = self.state.bookmarks.len();
+                    if len == 0 {
+                        return true;
+                    }
+                    const STEP: usize = 10;
+                    *cursor = match action {
+                        Action::CursorHalfPageDown => (*cursor + STEP).min(len - 1),
+                        _ => cursor.saturating_sub(STEP),
+                    };
+                    return true;
+                }
                 if let Some(Overlay::Help { scroll }) = &mut self.state.overlay {
                     const STEP: u16 = 10;
                     *scroll = match action {
@@ -386,6 +458,26 @@ impl App {
                 false
             }
             Action::CursorTop | Action::CursorBottom => {
+                if let Some(Overlay::Orders { timeline, cursor }) = &mut self.state.overlay {
+                    let len = timeline.events.len();
+                    if len > 0 {
+                        *cursor = match action {
+                            Action::CursorTop => 0,
+                            _ => len - 1,
+                        };
+                    }
+                    return true;
+                }
+                if let Some(Overlay::Marks { cursor }) = &mut self.state.overlay {
+                    let len = self.state.bookmarks.len();
+                    if len > 0 {
+                        *cursor = match action {
+                            Action::CursorTop => 0,
+                            _ => len - 1,
+                        };
+                    }
+                    return true;
+                }
                 if let Some(Overlay::Help { scroll }) = &mut self.state.overlay {
                     *scroll = match action {
                         Action::CursorTop => 0,
@@ -401,10 +493,68 @@ impl App {
             Action::OverlayApply => {
                 if matches!(self.state.overlay, Some(Overlay::Sessions { .. })) {
                     self.apply_session_filter();
+                } else if matches!(self.state.overlay, Some(Overlay::Orders { .. })) {
+                    self.jump_to_orders_selection();
+                } else if matches!(self.state.overlay, Some(Overlay::Marks { .. })) {
+                    self.jump_to_marks_selection();
                 }
                 true
             }
             _ => false,
+        }
+    }
+
+    /// `Enter` inside the Orders overlay: jump the main cursor to the
+    /// ordinal of the selected event and close the overlay so the user
+    /// lands on that message in the list/detail panes. If the event's
+    /// ordinal is outside the currently filtered view, warn the user —
+    /// we don't silently clear filters.
+    fn jump_to_orders_selection(&mut self) {
+        let Some(Overlay::Orders { timeline, cursor }) = self.state.overlay.clone() else {
+            return;
+        };
+        let Some(event) = timeline.events.get(cursor) else {
+            self.state.overlay = None;
+            return;
+        };
+        let target = event.ordinal;
+        if let Some(idx) = self.state.visible.iter().position(|&o| o == target) {
+            self.state.cursor = idx;
+            self.state.mode = ViewMode::Browse;
+            self.state.overlay = None;
+            self.state.status = StatusMessage::info(format!("jumped to #{target}"));
+        } else {
+            self.state.status = StatusMessage::warn(format!(
+                "message #{target} is hidden by current filter — clear filter to see it"
+            ));
+        }
+    }
+
+    /// `Enter` inside the Marks overlay: jump the main cursor to the
+    /// ordinal of the selected bookmark and close the overlay. Entries
+    /// are sorted by mark character (matches the overlay's render
+    /// order). If the ordinal is outside the current filtered view,
+    /// warn instead of silently clearing the filter.
+    fn jump_to_marks_selection(&mut self) {
+        let Some(Overlay::Marks { cursor }) = self.state.overlay else {
+            return;
+        };
+        let mut entries: Vec<(char, u32)> =
+            self.state.bookmarks.iter().map(|(c, o)| (*c, *o)).collect();
+        entries.sort_by_key(|(c, _)| *c);
+        let Some((c, target)) = entries.get(cursor).copied() else {
+            self.state.overlay = None;
+            return;
+        };
+        if let Some(idx) = self.state.visible.iter().position(|&o| o == target) {
+            self.state.cursor = idx;
+            self.state.mode = ViewMode::Browse;
+            self.state.overlay = None;
+            self.state.status = StatusMessage::info(format!("jumped to '{c}' (#{target})"));
+        } else {
+            self.state.status = StatusMessage::warn(format!(
+                "mark '{c}' (#{target}) is hidden by current filter — clear filter to see it"
+            ));
         }
     }
 

@@ -97,13 +97,16 @@ fn lines() -> Vec<Line<'static>> {
         blank(),
         header("DIFF (two messages)"),
         entry("dd", "set diff slot A to message under cursor"),
-        entry("dD", "set diff slot B and open diff overlay"),
+        entry(
+            "D",
+            "set diff slot B (after dd) and open diff overlay; dD also works",
+        ),
         entry(":diff clear", "reset both slots"),
         blank(),
         header("BOOKMARKS"),
-        entry("m<letter>", "set bookmark to message under cursor"),
+        entry("m<0-9>", "set bookmark (0..9) to message under cursor"),
         entry(
-            "'<letter>",
+            "'<0-9>",
             "jump to bookmark (must be in current filtered view)",
         ),
         entry(":marks", "list all bookmarks in an overlay"),
@@ -212,8 +215,8 @@ mod tests {
             "yy",
             "dd",
             "dD",
-            "m<letter>",
-            "'<letter>",
+            "m<0-9>",
+            "'<0-9>",
         ] {
             assert!(
                 text.contains(needle),

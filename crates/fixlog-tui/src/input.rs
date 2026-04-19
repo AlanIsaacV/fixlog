@@ -73,9 +73,14 @@ pub enum Action {
     MarkPrefix,
     /// `'` press — first half of a `'<letter>` sequence.
     JumpPrefix,
-    /// Any ASCII letter — completes `m<letter>` or `'<letter>`. The app
-    /// layer routes based on `pending_prefix`.
+    /// A mark-completion character (ASCII digit) emitted only when a
+    /// `m` or `'` prefix is pending. Marks are restricted to digits
+    /// (`0..=9`) so an accidental follow-up keystroke never triggers a
+    /// letter-bound shortcut instead of setting/jumping the mark.
     Letter(char),
+    /// `?` in normal mode — open the help overlay directly (mirrors
+    /// `:help` in command mode).
+    OpenHelp,
     /// `Esc` in normal mode — closes an open overlay if one is up.
     OverlayClose,
     /// `Enter` in normal mode — "commit" in the current overlay (e.g.
@@ -123,12 +128,39 @@ pub fn map_event(ev: &Event, mode: InputMode) -> Action {
     }
 }
 
+/// Variant of [`map_event`] used when `pending_prefix` is `m` or `'` in
+/// Normal mode. Any ASCII digit becomes [`Action::Letter`] regardless of
+/// its dedicated binding (notably `0` → `ScrollHome`), so marks `m0`..`m9`
+/// and `'0`..`'9` always complete without triggering a shortcut.
+///
+/// Non-digit keys stay on the standard mapping so `Esc`, `Ctrl+C`,
+/// resize events, ticks, and any accidental letter press continue to
+/// behave normally — the app layer will drop the stale prefix and
+/// dispatch the letter's regular action.
+pub fn map_event_digit_priority(ev: &Event) -> Action {
+    match ev {
+        Event::Key(k) => {
+            if let KeyCode::Char(c) = k.code
+                && c.is_ascii_digit()
+                && !k.modifiers.contains(KeyModifiers::CONTROL)
+            {
+                return Action::Letter(c);
+            }
+            map_normal_key(k)
+        }
+        Event::Resize(w, h) => Action::Resize(*w, *h),
+        Event::Tick => Action::None,
+    }
+}
+
 pub fn map_normal_key(k: &KeyEvent) -> Action {
     match (k.code, k.modifiers) {
         (KeyCode::Char('q'), KeyModifiers::NONE) => Action::Quit,
         (KeyCode::Char('c'), KeyModifiers::CONTROL) => Action::Quit,
         // `:` arrives as Char(':') with either NONE or SHIFT depending on keymap.
         (KeyCode::Char(':'), _) => Action::EnterCommand,
+        // `?` mirrors `:help` without entering command mode.
+        (KeyCode::Char('?'), _) => Action::OpenHelp,
         // Vim-like navigation.
         (KeyCode::Char('j'), KeyModifiers::NONE) | (KeyCode::Down, KeyModifiers::NONE) => {
             Action::CursorDown
@@ -240,6 +272,19 @@ mod tests {
         assert_eq!(
             map_normal_key(&key(KeyCode::Char(':'), KeyModifiers::SHIFT)),
             Action::EnterCommand
+        );
+    }
+
+    #[test]
+    fn question_mark_opens_help() {
+        // `?` arrives as Char('?') with or without SHIFT depending on keymap.
+        assert_eq!(
+            map_normal_key(&key(KeyCode::Char('?'), KeyModifiers::NONE)),
+            Action::OpenHelp
+        );
+        assert_eq!(
+            map_normal_key(&key(KeyCode::Char('?'), KeyModifiers::SHIFT)),
+            Action::OpenHelp
         );
     }
 
@@ -520,5 +565,42 @@ mod tests {
     fn tick_is_none() {
         assert_eq!(map_event(&Event::Tick, InputMode::Normal), Action::None);
         assert_eq!(map_event(&Event::Tick, InputMode::Command), Action::None);
+    }
+
+    #[test]
+    fn digit_priority_promotes_all_digits_including_zero() {
+        // `0` is bound to `ScrollHome` under the standard mapping; under
+        // digit-priority it must become `Letter('0')` so `m0` / `'0`
+        // complete without triggering ScrollHome.
+        for c in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'] {
+            assert_eq!(
+                map_event_digit_priority(&Event::Key(key(KeyCode::Char(c), KeyModifiers::NONE))),
+                Action::Letter(c),
+                "digit {c} should be promoted under digit-priority"
+            );
+        }
+    }
+
+    #[test]
+    fn digit_priority_preserves_letters_and_specials() {
+        // Letters fall through to their normal bindings — an accidental
+        // letter press after `m`/`'` must not be silently swallowed as
+        // a mark character. The app layer clears the stale prefix.
+        assert_eq!(
+            map_event_digit_priority(&Event::Key(key(KeyCode::Char('c'), KeyModifiers::NONE))),
+            Action::ToggleSkipCommon
+        );
+        assert_eq!(
+            map_event_digit_priority(&Event::Key(key(KeyCode::Esc, KeyModifiers::NONE))),
+            Action::OverlayClose
+        );
+        assert_eq!(
+            map_event_digit_priority(&Event::Key(key(KeyCode::Char('c'), KeyModifiers::CONTROL))),
+            Action::Quit
+        );
+        assert_eq!(
+            map_event_digit_priority(&Event::Resize(10, 20)),
+            Action::Resize(10, 20)
+        );
     }
 }

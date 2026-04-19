@@ -1,93 +1,120 @@
-//! Bookmarks overlay — table of `letter → ordinal → preview`.
+//! Bookmarks overlay — same semantic columns as the main list
+//! (`time | message | client order id | status | detail`) prefixed by
+//! a `mark` column. Navigable with `j`/`k`; `Enter` jumps the main
+//! cursor to the selected bookmark's ordinal and closes the overlay.
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Block, Borders, Cell, Clear, Row, Table};
-
-use fixlog_core::parse_one_with_format;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use crate::state::AppState;
+use crate::view::list::{
+    COL_CLORDID, COL_MESSAGE, COL_SEP, COL_STATUS, COL_TIME, build_line_for_ord, header_line,
+    pad_cell,
+};
 
-pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
-    let overlay_area = centered_rect(60, 60, area);
+/// Width of the leading "mark" column — one digit plus padding.
+const COL_MARK: usize = 4;
+
+pub fn render(frame: &mut Frame, area: Rect, state: &AppState, cursor: usize) {
+    let overlay_area = centered_rect(90, 60, area);
     frame.render_widget(Clear, overlay_area);
 
-    let mut entries: Vec<_> = state.bookmarks.iter().collect();
+    let mut entries: Vec<(char, u32)> = state.bookmarks.iter().map(|(c, o)| (*c, *o)).collect();
     entries.sort_by_key(|(c, _)| *c);
 
-    let header = Row::new(vec!["mark", "ordinal", "preview"])
-        .style(Style::default().add_modifier(Modifier::BOLD));
-    let rows: Vec<Row<'static>> = entries
-        .into_iter()
-        .map(|(c, ord)| {
-            let preview = state
-                .index
-                .message_bytes(&state.mmap, *ord as usize)
-                .and_then(|b| {
-                    parse_one_with_format(b, &state.format)
-                        .ok()
-                        .map(|(m, _)| preview_msg(&m))
-                })
-                .unwrap_or_else(|| "-".into());
-            Row::new(vec![
-                Cell::from(c.to_string()),
-                Cell::from(ord.to_string()),
-                Cell::from(preview),
-            ])
+    let block = Block::default()
+        .title("bookmarks  (j/k: move · Enter: jump · Esc: close · m<0-9> set · '<0-9> jump)")
+        .borders(Borders::ALL);
+
+    if entries.is_empty() {
+        frame.render_widget(
+            Paragraph::new("no marks set — press m<0-9> on a message in the list").block(block),
+            overlay_area,
+        );
+        return;
+    }
+
+    let inner = block.inner(overlay_area);
+    frame.render_widget(block, overlay_area);
+
+    if inner.height < 2 || inner.width < 10 {
+        return;
+    }
+
+    let header_area = Rect {
+        x: inner.x,
+        y: inner.y,
+        width: inner.width,
+        height: 1,
+    };
+    let body_area = Rect {
+        x: inner.x,
+        y: inner.y + 1,
+        width: inner.width,
+        height: inner.height - 1,
+    };
+
+    // Header: "mark" prefix + the standard list columns.
+    let hstyle = Style::default().add_modifier(Modifier::BOLD);
+    let mut header_spans = vec![
+        Span::styled(pad_cell("mark", COL_MARK), hstyle),
+        Span::raw(COL_SEP),
+    ];
+    header_spans.extend(header_line().spans);
+    frame.render_widget(Paragraph::new(Line::from(header_spans)), header_area);
+
+    // Clamp cursor inside the current entries — the caller may have
+    // deleted bookmarks between renders.
+    let selected = cursor.min(entries.len() - 1);
+
+    let lines: Vec<Line<'static>> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, (c, ord))| {
+            let base = build_line_for_ord(state, *ord);
+            let mut spans = vec![
+                Span::raw(pad_cell(&c.to_string(), COL_MARK)),
+                Span::raw(COL_SEP),
+            ];
+            spans.extend(base.spans);
+            let line = Line::from(spans).style(base.style);
+            if i == selected {
+                line.patch_style(Style::default().add_modifier(Modifier::REVERSED))
+            } else {
+                line
+            }
         })
         .collect();
 
-    let widths = [
-        Constraint::Length(6),
-        Constraint::Length(10),
-        Constraint::Min(20),
-    ];
-    let table = Table::new(rows, widths).header(header).block(
-        Block::default()
-            .title("bookmarks  (Esc close · m<letter> to set · '<letter> to jump)")
-            .borders(Borders::ALL),
-    );
-    frame.render_widget(table, overlay_area);
+    frame.render_widget(Paragraph::new(lines), body_area);
 }
 
-fn preview_msg(msg: &fixlog_core::RawMessage<'_>) -> String {
-    let mt = msg
-        .tags
-        .iter()
-        .find(|(t, _)| *t == 35)
-        .map(|(_, v)| String::from_utf8_lossy(v).into_owned())
-        .unwrap_or_else(|| "?".into());
-    let sender = msg
-        .tags
-        .iter()
-        .find(|(t, _)| *t == 49)
-        .map(|(_, v)| String::from_utf8_lossy(v).into_owned())
-        .unwrap_or_else(|| "?".into());
-    let target = msg
-        .tags
-        .iter()
-        .find(|(t, _)| *t == 56)
-        .map(|(_, v)| String::from_utf8_lossy(v).into_owned())
-        .unwrap_or_else(|| "?".into());
-    format!("{mt}  {sender}→{target}")
+/// Total width of the data columns (minus the trailing `detail`, which
+/// extends). Used for horizontal layout sanity; kept private to avoid
+/// making the overlay any more brittle to upstream column tweaks.
+#[allow(dead_code)]
+fn fixed_columns_width() -> usize {
+    COL_MARK + 1 + COL_TIME + 1 + COL_MESSAGE + 1 + COL_CLORDID + 1 + COL_STATUS + 1
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = ratatui::layout::Layout::default()
         .direction(ratatui::layout::Direction::Vertical)
         .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
+            ratatui::layout::Constraint::Percentage((100 - percent_y) / 2),
+            ratatui::layout::Constraint::Percentage(percent_y),
+            ratatui::layout::Constraint::Percentage((100 - percent_y) / 2),
         ])
         .split(r);
     ratatui::layout::Layout::default()
         .direction(ratatui::layout::Direction::Horizontal)
         .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
+            ratatui::layout::Constraint::Percentage((100 - percent_x) / 2),
+            ratatui::layout::Constraint::Percentage(percent_x),
+            ratatui::layout::Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
 }

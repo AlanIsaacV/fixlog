@@ -165,16 +165,16 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             state::Overlay::Sessions { map, cursor } => {
                 view::sessions::render(frame, area, &map, cursor);
             }
-            state::Overlay::Orders { timeline, scroll } => {
-                view::orders::render(frame, area, &timeline, scroll);
+            state::Overlay::Orders { timeline, cursor } => {
+                view::orders::render(frame, area, &timeline, cursor);
             }
             state::Overlay::Diff => {
                 if let (Some(a), Some(b)) = (app.state.diff_slots[0], app.state.diff_slots[1]) {
                     view::diff::render(frame, area, &app.state, a, b);
                 }
             }
-            state::Overlay::Marks => {
-                view::marks::render(frame, area, &app.state);
+            state::Overlay::Marks { cursor } => {
+                view::marks::render(frame, area, &app.state, cursor);
             }
             state::Overlay::Histogram { histogram, width } => {
                 view::histogram::render(frame, area, &histogram, width);
