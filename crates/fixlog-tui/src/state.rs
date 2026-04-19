@@ -208,6 +208,12 @@ pub enum Overlay {
         histogram: Histogram,
         width: usize,
     },
+    /// Keybinding + command cheatsheet rendered by `view::help`. `scroll`
+    /// is the first row index rendered inside the overlay viewport so the
+    /// user can page through sections taller than the terminal.
+    Help {
+        scroll: u16,
+    },
 }
 
 /// Runtime state. Fields are `pub` so view modules can read freely; all

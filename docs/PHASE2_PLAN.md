@@ -24,7 +24,7 @@ Plan atómico y ordenado para la Fase 2. Se arranca con Fase 1 cerrada (benchmar
 
 ## P2-T01 · Stub del crate `fixlog-index`
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: Fase 1 cerrada.
 - **Objetivo**: crate con tipos públicos compilables (sin lógica).
 - **Archivos**:
@@ -41,7 +41,7 @@ Plan atómico y ordenado para la Fase 2. Se arranca con Fase 1 cerrada (benchmar
 
 ## P2-T02 · Indexación single-thread sobre buffer
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: P2-T01
 - **Objetivo**: construir `LogIndex` recorriendo el buffer con el parser actual (sin paralelizar todavía).
 - **Archivos**:
@@ -59,7 +59,7 @@ Plan atómico y ordenado para la Fase 2. Se arranca con Fase 1 cerrada (benchmar
 
 ## P2-T03 · Índice secundario configurable
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: P2-T02
 - **Objetivo**: para un set de tags "hot" (default: `35, 49, 56, 11, 34, 37`), construir `HashMap<(Tag, Value), Vec<MessageIdx>>`.
 - **Archivos**:
@@ -78,7 +78,7 @@ Plan atómico y ordenado para la Fase 2. Se arranca con Fase 1 cerrada (benchmar
 
 ## P2-T04 · Append-only: `append_from_offset`
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: P2-T03
 - **Objetivo**: soportar crecimiento incremental del archivo sin reindexar desde cero.
 - **Archivos**:
@@ -96,7 +96,7 @@ Plan atómico y ordenado para la Fase 2. Se arranca con Fase 1 cerrada (benchmar
 
 ## P2-T05 · Indexación paralela con rayon
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: P2-T02 (P2-T03 puede quedarse single-thread inicialmente)
 - **Objetivo**: partir el archivo en chunks, cada worker encuentra su primer `8=FIX`, indexa, se combinan resultados.
 - **Archivos**:
@@ -114,7 +114,7 @@ Plan atómico y ordenado para la Fase 2. Se arranca con Fase 1 cerrada (benchmar
 
 ## P2-T06 · Stub y parser del DSL (`fixlog-query`)
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: Fase 1 (parser)
 - **Objetivo**: crate nuevo con AST + parser para expresiones tipo `35=D AND 55=AAPL`.
 - **Gramática (EBNF simplificada)**:
@@ -139,7 +139,7 @@ Plan atómico y ordenado para la Fase 2. Se arranca con Fase 1 cerrada (benchmar
 
 ## P2-T07 · Evaluador de expresiones contra `RawMessage`
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: P2-T06
 - **Objetivo**: evaluar `Expr` contra un `RawMessage` sin allocations en el hot path.
 - **Archivos**:
@@ -155,7 +155,7 @@ Plan atómico y ordenado para la Fase 2. Se arranca con Fase 1 cerrada (benchmar
 
 ## P2-T08 · Subcomando `grep` en la CLI
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: P2-T07
 - **Objetivo**: `fixlog grep <file> --filter "expr" [--format json|pretty]`.
 - **Archivos**:
@@ -172,7 +172,7 @@ Plan atómico y ordenado para la Fase 2. Se arranca con Fase 1 cerrada (benchmar
 
 ## P2-T09 · Tailing con `notify` + `--follow`
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: P2-T04 (append), P2-T08 (grep)
 - **Objetivo**: `fixlog grep <file> --follow --filter "..."` se queda leyendo el archivo como `tail -f`.
 - **Archivos**:

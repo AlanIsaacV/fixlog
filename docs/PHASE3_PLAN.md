@@ -35,7 +35,7 @@ Plan atómico y ordenado para la Fase 3. Se arranca con Fase 2 cerrada (index pa
 Todas heredadas y vigentes. Si una PR las rompe, re-hacer — no flexibilizar.
 
 - **Parser zero-copy**: `RawMessage.raw` y `RawMessage.tags` siguen referenciando el `&[u8]` del mmap. No `String` ni `Vec<u8>` en el hot path de rendering de la lista.
-- **`LogIndex.consumed` ≠ `buf.len()`**: es el byte inmediatamente después del último mensaje *exitoso*. Cualquier re-render/append del TUI parte de `consumed`, no de `file_size`.
+- **`LogIndex.consumed` ≠ `buf.len()`**: es el byte inmediatamente después del último mensaje _exitoso_. Cualquier re-render/append del TUI parte de `consumed`, no de `file_size`.
 - **`append_from_offset(buf, from)` exige `from == self.consumed`**. El watcher del TUI debe leer `consumed` ANTES de disparar el append y pasarlo tal cual.
 - **Query DSL es tag-numérico**: la barra de filtro acepta `35=D AND 55=AAPL`, no `MsgType=NewOrderSingle`. El adapter symbolic name queda fuera de scope (Fase 5 o adapter thin posterior).
 - **`fixlog-parser` no depende de `fixlog-dict`**. El TUI usa ambos, pero la dirección de la dependencia no cambia.
@@ -46,7 +46,7 @@ Todas heredadas y vigentes. Si una PR las rompe, re-hacer — no flexibilizar.
 
 ## P3-T01 · Stub del crate `fixlog-tui`
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: Fase 2 cerrada.
 - **Objetivo**: crate library con tipos públicos y dependencias declaradas; compila sin lógica.
 - **Archivos**:
@@ -65,7 +65,7 @@ Todas heredadas y vigentes. Si una PR las rompe, re-hacer — no flexibilizar.
 
 ## P3-T02 · Event loop + setup/teardown del terminal
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: P3-T01
 - **Objetivo**: `run(cfg)` abre el terminal en raw mode, pinta un frame vacío con "fixlog" + path, cierra limpio en `q` o `Ctrl+C`.
 - **Archivos**:
@@ -84,7 +84,7 @@ Todas heredadas y vigentes. Si una PR las rompe, re-hacer — no flexibilizar.
 
 ## P3-T03 · Modelo de estado (`AppState`) y vista de datos
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: P3-T02
 - **Objetivo**: tipos de dominio que representan "qué mensaje está visible", "cuál está seleccionado", modo follow/browse. Sin render todavía.
 - **Archivos**:
@@ -121,7 +121,7 @@ Todas heredadas y vigentes. Si una PR las rompe, re-hacer — no flexibilizar.
 
 ## P3-T04 · Lista virtual de mensajes
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: P3-T03
 - **Objetivo**: panel principal renderiza sólo las filas visibles del viewport. Cada fila: `#ordinal  offset  MsgType  SenderCompID→TargetCompID  (primeros N bytes del raw)`.
 - **Archivos**:
@@ -144,7 +144,7 @@ Todas heredadas y vigentes. Si una PR las rompe, re-hacer — no flexibilizar.
 
 ## P3-T05 · Panel de detalle
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: P3-T04
 - **Objetivo**: panel lateral (o inferior) muestra el mensaje seleccionado decodificado con el resolver del dict.
 - **Archivos**:
@@ -164,7 +164,7 @@ Todas heredadas y vigentes. Si una PR las rompe, re-hacer — no flexibilizar.
 
 ## P3-T06 · Barra de estado + barra de comando
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: P3-T05
 - **Objetivo**: dos líneas en el fondo de la pantalla. Status muestra versión FIX, filtro activo, contador; command bar inicia con `:` y acepta comandos.
 - **Archivos**:
@@ -187,7 +187,7 @@ Todas heredadas y vigentes. Si una PR las rompe, re-hacer — no flexibilizar.
 
 ## P3-T07 · Navegación vim-like
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: P3-T06
 - **Objetivo**: keybindings completos de navegación en la lista.
 - **Bindings**:
@@ -215,7 +215,7 @@ Todas heredadas y vigentes. Si una PR las rompe, re-hacer — no flexibilizar.
 
 ## P3-T08 · Modo Follow / Browse + indicador de mensajes nuevos
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: P3-T07
 - **Objetivo**: toggle con `F`. En follow el cursor se pega al final; en browse el cursor es libre y se muestra `⬇ N new` cuando llegan mensajes.
 - **Archivos**:
@@ -234,7 +234,7 @@ Todas heredadas y vigentes. Si una PR las rompe, re-hacer — no flexibilizar.
 
 ## P3-T09 · Filtro live (reutiliza `fixlog-query`)
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: P3-T08
 - **Objetivo**: barra `/` abre filtro inline; cada keystroke recompila y re-evalúa; resultados visibles en tiempo real.
 - **Archivos**:
@@ -266,7 +266,7 @@ Todas heredadas y vigentes. Si una PR las rompe, re-hacer — no flexibilizar.
 
 ## P3-T10 · Búsqueda `/` + `n/N`
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: P3-T09
 - **Objetivo**: `/<expr>` busca dentro del `visible` actual y mueve cursor al siguiente match; `n` siguiente, `N` anterior.
 - **Decisión**:
@@ -285,7 +285,7 @@ Todas heredadas y vigentes. Si una PR las rompe, re-hacer — no flexibilizar.
 
 ## P3-T11 · Resaltado por `MsgType`
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: P3-T04
 - **Objetivo**: color por tipo de mensaje en la lista.
 - **Mapeo default**:
@@ -308,7 +308,7 @@ Todas heredadas y vigentes. Si una PR las rompe, re-hacer — no flexibilizar.
 
 ## P3-T12 · Yank al clipboard
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: P3-T05
 - **Objetivo**: `yy` copia el mensaje crudo seleccionado; `yY` copia el pretty-printed.
 - **Archivos**:
@@ -326,7 +326,7 @@ Todas heredadas y vigentes. Si una PR las rompe, re-hacer — no flexibilizar.
 
 ## P3-T13 · Integración `--follow` (tailing dentro del TUI)
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: P3-T08, P3-T09
 - **Objetivo**: `fixlog-tui <file> --follow` se queda leyendo cambios del archivo; append al index, re-filter, refrescar lista.
 - **Archivos**:
@@ -350,7 +350,7 @@ Todas heredadas y vigentes. Si una PR las rompe, re-hacer — no flexibilizar.
 
 ## P3-T14 · Subcomando `fixlog tui <file>` en `fixlog-cli`
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: P3-T01..T13
 - **Objetivo**: el binario `fixlog` sabe invocar el TUI vía `fixlog tui <file> [--filter EXPR] [--follow]`.
 - **Archivos**:
@@ -377,7 +377,7 @@ Todas heredadas y vigentes. Si una PR las rompe, re-hacer — no flexibilizar.
 
 ## P3-T15 · Bench de frame budget y anti-regresión
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: P3-T14
 - **Objetivo**: validar el criterio "<16 ms por frame en archivo de 1M mensajes".
 - **Archivos**:
@@ -394,7 +394,7 @@ Todas heredadas y vigentes. Si una PR las rompe, re-hacer — no flexibilizar.
 
 ## P3-T16 · Docs y actualización de `state.md`
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: P3-T15
 - **Objetivo**: agent docs para el nuevo crate y estado de fase.
 - **Archivos**:
@@ -403,7 +403,7 @@ Todas heredadas y vigentes. Si una PR las rompe, re-hacer — no flexibilizar.
   - `docs/agent/state.md` — sección "Completed (vs PHASE3_PLAN.md)" con la tabla de tareas, baseline de frame budget, nuevas decisiones deferidas.
   - Actualizar `CLAUDE.md` sólo si cambia el stack (p.ej. añadir `arboard` a la lista de dependencias mencionadas) — pero sin reescribir secciones.
 - **Criterio de aceptación**:
-  - `docs/agent/state.md` refleja fielmente lo implementado (reglas de "autoritativo sobre PHASE*_PLAN").
+  - `docs/agent/state.md` refleja fielmente lo implementado (reglas de "autoritativo sobre PHASE\*\_PLAN").
   - `tui.md` enumera todos los keybindings y las invariantes nuevas (p.ej. `ResolvedMessageOwned` vs borrowed).
 
 ---

@@ -362,9 +362,40 @@ impl App {
                     };
                     return true;
                 }
+                if let Some(Overlay::Help { scroll }) = &mut self.state.overlay {
+                    *scroll = match action {
+                        Action::CursorDown => scroll.saturating_add(1),
+                        _ => scroll.saturating_sub(1),
+                    };
+                    return true;
+                }
                 // Orders / Histogram / Marks / Diff: no intra-overlay nav
                 // wired yet; let the action through so the main list still
                 // responds (though visually the overlay hides it).
+                false
+            }
+            Action::CursorHalfPageDown | Action::CursorHalfPageUp => {
+                if let Some(Overlay::Help { scroll }) = &mut self.state.overlay {
+                    const STEP: u16 = 10;
+                    *scroll = match action {
+                        Action::CursorHalfPageDown => scroll.saturating_add(STEP),
+                        _ => scroll.saturating_sub(STEP),
+                    };
+                    return true;
+                }
+                false
+            }
+            Action::CursorTop | Action::CursorBottom => {
+                if let Some(Overlay::Help { scroll }) = &mut self.state.overlay {
+                    *scroll = match action {
+                        Action::CursorTop => 0,
+                        // Clamp to content length so G lands exactly at the
+                        // last line even with a tall terminal.
+                        _ => u16::try_from(crate::view::help::content_len().saturating_sub(1))
+                            .unwrap_or(u16::MAX),
+                    };
+                    return true;
+                }
                 false
             }
             Action::OverlayApply => {

@@ -53,7 +53,7 @@ Heredadas de Fases 1–3. Siguen vigentes. Si una PR las rompe, re-hacer — no 
 
 ## P4-T01 · Stub del crate `fixlog-analysis`
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: Fase 3 cerrada.
 - **Objetivo**: crate library con tipos públicos compilables; sin lógica.
 - **Archivos**:

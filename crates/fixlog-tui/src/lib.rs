@@ -179,6 +179,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             state::Overlay::Histogram { histogram, width } => {
                 view::histogram::render(frame, area, &histogram, width);
             }
+            state::Overlay::Help { scroll } => {
+                view::help::render(frame, area, scroll);
+            }
         }
     }
 }

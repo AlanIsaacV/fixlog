@@ -6,6 +6,7 @@
 pub mod command;
 pub mod detail;
 pub mod diff;
+pub mod help;
 pub mod histogram;
 pub mod list;
 pub mod marks;

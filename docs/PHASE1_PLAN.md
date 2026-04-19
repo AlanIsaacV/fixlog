@@ -12,7 +12,7 @@ Plan atómico y ordenado para la Fase 1. Cada tarea tiene objetivo claro, archiv
 
 ## T01 · Setup del workspace Cargo
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: —
 - **Objetivo**: estructura raíz del proyecto lista para recibir crates.
 - **Archivos**:
@@ -60,7 +60,7 @@ Plan atómico y ordenado para la Fase 1. Cada tarea tiene objetivo claro, archiv
 
 ## T04 · Tokenizer SOH (parser MVP sin sniffer)
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: T03
 - **Objetivo**: convertir bytes (asumiendo separador SOH, sin prefijo) en `RawMessage`.
 - **Archivos**:
@@ -77,7 +77,7 @@ Plan atómico y ordenado para la Fase 1. Cada tarea tiene objetivo claro, archiv
 
 ## T05 · Tests de integración del parser contra fixtures sintéticas
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: T02, T04
 - **Objetivo**: validar parser contra múltiples fixtures pequeños, incluyendo edge cases.
 - **Archivos**:
@@ -89,7 +89,7 @@ Plan atómico y ordenado para la Fase 1. Cada tarea tiene objetivo claro, archiv
 
 ## T06 · Stub + implementación del crate `fixlog-format` (sniffer)
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: T03
 - **Objetivo**: detectar separador, prefijo, encoding y line endings en las primeras ~1000 líneas.
 - **Archivos**:
@@ -108,7 +108,7 @@ Plan atómico y ordenado para la Fase 1. Cada tarea tiene objetivo claro, archiv
 
 ## T07 · Integración parser ↔ sniffer
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: T04, T06
 - **Objetivo**: el parser consume `LogFormat` del sniffer, soporta prefijos y separadores no-SOH.
 - **Archivos**:
@@ -122,7 +122,7 @@ Plan atómico y ordenado para la Fase 1. Cada tarea tiene objetivo claro, archiv
 
 ## T08 · Stub del crate `fixlog-dict` y pipeline XML → código
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: T03
 - **Objetivo**: `build.rs` que convierte `dictionaries/FIX44.xml` en código Rust estático.
 - **Archivos**:
@@ -137,7 +137,7 @@ Plan atómico y ordenado para la Fase 1. Cada tarea tiene objetivo claro, archiv
 
 ## T09 · Resolver: `RawMessage` → `ResolvedMessage`
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: T08
 - **Objetivo**: función que toma `RawMessage` y devuelve `ResolvedMessage` con nombres y enums decodificados.
 - **Archivos**:
@@ -150,7 +150,7 @@ Plan atómico y ordenado para la Fase 1. Cada tarea tiene objetivo claro, archiv
 
 ## T10 · Stub del crate `fixlog-cli`
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: T07, T09
 - **Objetivo**: binario CLI con esqueleto de comandos usando `clap`.
 - **Archivos**:
@@ -163,7 +163,7 @@ Plan atómico y ordenado para la Fase 1. Cada tarea tiene objetivo claro, archiv
 
 ## T11 · Comando `sniff`
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: T10
 - **Objetivo**: `fixlog sniff <file>` imprime el `LogFormat` detectado.
 - **Archivos**:
@@ -175,7 +175,7 @@ Plan atómico y ordenado para la Fase 1. Cada tarea tiene objetivo claro, archiv
 
 ## T12 · Comando `parse`
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: T10
 - **Objetivo**: `fixlog parse <file> [--first N] [--format json|pretty]` imprime mensajes.
 - **Archivos**:
@@ -188,7 +188,7 @@ Plan atómico y ordenado para la Fase 1. Cada tarea tiene objetivo claro, archiv
 
 ## T13 · Comando `stats`
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: T10
 - **Objetivo**: `fixlog stats <file>` imprime resumen ejecutivo.
 - **Archivos**:
@@ -200,7 +200,7 @@ Plan atómico y ordenado para la Fase 1. Cada tarea tiene objetivo claro, archiv
 
 ## T14 · Ampliación de diccionarios: 5.0, 5.0SP1, 5.0SP2, FIXT.1.1
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: T08, T09
 - **Objetivo**: soportar todas las versiones requeridas y selección automática.
 - **Archivos**:
@@ -214,7 +214,7 @@ Plan atómico y ordenado para la Fase 1. Cada tarea tiene objetivo claro, archiv
 
 ## T15 · `fixlog-core` como facade
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: T07, T09, T14
 - **Objetivo**: crate que re-exporta los tipos públicos de los crates inferiores.
 - **Archivos**:
@@ -226,7 +226,7 @@ Plan atómico y ordenado para la Fase 1. Cada tarea tiene objetivo claro, archiv
 
 ## T16 · Benchmark baseline con `criterion`
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: T07, T13
 - **Objetivo**: establecer métricas de performance como referencia para futuras fases.
 - **Archivos**:
@@ -238,7 +238,7 @@ Plan atómico y ordenado para la Fase 1. Cada tarea tiene objetivo claro, archiv
 
 ## T17 · Validación end-to-end
 
-- **Estado**: `[ ]`
+- **Estado**: `[x]`
 - **Depende de**: todas las anteriores
 - **Objetivo**: validar que todo funciona sobre el corpus real, no solo sintético.
 - **Pasos**:

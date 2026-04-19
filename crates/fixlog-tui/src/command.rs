@@ -182,8 +182,7 @@ pub fn execute(state: &mut AppState, cmd: Command) -> Outcome {
     match cmd {
         Command::Quit => Outcome::Quit,
         Command::Help => {
-            state.status =
-                StatusMessage::info(":q quit · :filter <expr> apply filter · :filter clear all");
+            state.overlay = Some(Overlay::Help { scroll: 0 });
             Outcome::Continue
         }
         Command::SetFilter(expr) => match parse_query(&expr) {

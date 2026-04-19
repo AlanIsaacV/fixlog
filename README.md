@@ -2,17 +2,22 @@
 
 Parser y viewer de logs FIX (Financial Information eXchange) en Rust. Pensado para procesar millones de mensajes de forma eficiente, con zero-copy desde el archivo hasta la salida y un TUI interactivo local.
 
-**Estado actual**: Fases 1–3 cerradas. CLI con `sniff`, `parse`, `stats`, `grep` (con `--follow`) y TUI interactivo (`fixlog tui`) sobre FIX 4.4, FIXT.1.1 y FIX 5.0SP2.
+**Estado actual**: Fases 1–4 cerradas + rediseño TUI (Fases A/B, 2026-04-18) + Fase 5 parcial. CLI con `sniff`, `parse`, `stats`, `grep` (con `--follow`), `sessions`, `orders`, `histogram` y TUI interactivo (`fixlog tui`) sobre FIX 4.4, FIXT.1.1, FIX 5.0, FIX 5.0 SP1 y FIX 5.0 SP2.
 
 ## Qué puede hacer hoy
 
 - **Auto-detectar formato** de un log: separador (`SOH`, `|`, `^`, `;`), prefijos de línea (timestamps, logback), line endings.
 - **Parsear sin asumir un formato único**: un mismo binario procesa logs QuickFIX puros, logs re-renderizados con `|`, logs envueltos en prefijos variables.
-- **Resolver tags a nombres**: tag `54` → `Side`, valor `1` → `BUY`. Múltiples diccionarios (FIX 4.4, FIXT.1.1, FIX 5.0SP2) con selección automática según `BeginString` y `ApplVerID`.
+- **Resolver tags a nombres**: tag `54` → `Side`, valor `1` → `BUY`. Múltiples diccionarios (FIX 4.4, FIXT.1.1, FIX 5.0, FIX 5.0 SP1, FIX 5.0 SP2) con selección automática según `BeginString` y `ApplVerID`.
 - **Resumir un archivo** de millones de mensajes en segundos: sesiones, rango temporal, top MsgTypes.
 - **Indexar en paralelo** con rayon: ~1 GiB/s de throughput en 1M mensajes; soporte append-only para tailing incremental.
 - **Filtrar con DSL** tipo grep: `35=D AND 55=AAPL`, `55~^MS`, con `--follow` estilo `tail -f`.
-- **TUI interactivo** (ratatui): lista virtual con detalle resuelto, filtro live, navegación vim, yank al clipboard, tailing en vivo.
+- **Hot-tag pre-filter**: filtros AND de igualdades sobre tags indexados se resuelven en ~156 µs sobre 1M mensajes (≈3000× más rápido que full-scan).
+- **Análisis de sesiones**: agrupar mensajes por par canónico `(SenderCompID, TargetCompID)`, mostrar conteos por dirección, rango de `MsgSeqNum` y detectar gaps.
+- **Order lifecycle**: reconstruir el ciclo completo de una orden por `ClOrdID` (tag 11), siguiendo `F` (cancel) y `G` (replace) aunque el ClOrdID cambie, con un gráfico Gantt ASCII.
+- **Histograma temporal**: distribución de mensajes por segundo/ms/μs/minuto con sparkline ASCII y top-N de picos de tráfico.
+- **TUI interactivo** (ratatui): lista virtual con columnas semánticas (`TIME · MESSAGE · CLIENT ORDER ID · STATUS · DETAIL`), detalle resuelto con navegación por campo, filtro live con preview, búsqueda, overlays para sesiones / órdenes / diff / bookmarks / histograma, filtrado desde el campo bajo cursor (`f`/`x`), toggle de header/trailer (`c`), toggle de heartbeats (`H`), yank al clipboard, tailing en vivo.
+- **Diff entre mensajes**, bookmarks vim-style (`m<letra>` / `'<letra>`) y **export** multi-formato (`csv` / `json` / `fix` / `pretty`) directo desde el TUI.
 - **Emitir JSON** línea-por-línea para piping a `jq` u otras herramientas.
 
 ## Instalación
@@ -97,6 +102,68 @@ Message types:   6 (6 shown)
            1  9    OrderCancelReject
 ```
 
+### `fixlog sessions` — sesiones y gaps de secuencia
+
+Agrupa mensajes por par canónico `(SenderCompID, TargetCompID)` (las dos direcciones colapsan en una entrada) y detecta huecos en `MsgSeqNum` por dirección.
+
+```sh
+$ fixlog sessions fixtures/real/fix44-om.log
+session                          msgs   seq-range       top types        gaps
+BROKER ↔ OMS                     5419   1..5419         8=3124 D=1535    0
+```
+
+Opciones:
+- `--format pretty|json` — JSONL (uno por sesión) útil para pipear a `jq`.
+
+Exit code `1` si el log no contiene sesiones resolubles.
+
+### `fixlog orders` — lifecycle de una orden
+
+Sin `--id` lista las top-N cadenas de órdenes con más eventos; con `--id <clordid>` imprime el timeline completo + Gantt ASCII del ciclo de vida, siguiendo `F` (cancel) y `G` (replace) aunque el ClOrdID cambie a mitad de la cadena.
+
+```sh
+$ fixlog orders my.log --id ABC123
+ClOrdID: ABC123
+events: 7
+
+  offset  ordinal  type  exec_type  ord_status  at
+  2048    42       D     —          —           20260416-13:30:04.713
+  2161    43       8     PendingNew New         20260416-13:30:04.720
+  2274    44       8     New        New         20260416-13:30:04.742
+  ...
+
+Gantt:  N  X  N  P  P  F
+
+$ fixlog orders my.log --limit 5
+```
+
+Opciones:
+- `--id <clordid>` — imprimir solo ese ciclo.
+- `--limit N` — top-N órdenes cuando no se pasa `--id` (default: 20).
+- `--format pretty|json`.
+
+### `fixlog histogram` — histograma temporal
+
+Distribución de mensajes por bucket de tiempo (basado en `SendingTime`, tag 52) con sparkline ASCII escalado por percentil 95 y lista de picos.
+
+```sh
+$ fixlog histogram my.log --bucket 500ms --width 100 --peaks 3
+bucket:  500ms
+bins:    42389  (dropped: 12)
+
+▁▁▂▃▄▅▇█▇▆▅▃▂▂▁ … (100 cols)
+
+peaks:
+   2026-04-16 13:31:24.500    487 msgs
+   2026-04-16 13:31:25.000    441 msgs
+   2026-04-16 13:31:25.500    398 msgs
+```
+
+Opciones:
+- `--bucket <dur>` — tamaño de bucket; soporta `Ns`, `Nms`, `Nus`, `Nm` (default: `1s`).
+- `--width <cols>` — ancho de la sparkline en columnas (default: 80).
+- `--peaks <N>` — cuántos picos mostrar (default: 5).
+
 ### `fixlog grep` — filtrar con DSL
 
 Gramática mínima del filtro (ver `crates/fixlog-query`): `<tag><op><value>` combinados con `AND` / `OR` / `NOT` y paréntesis. Operadores: `=`, `!=`, `~` (regex). Precedencia: `NOT > AND > OR`.
@@ -127,49 +194,72 @@ fixlog tui my.log --filter "35=D"        # pre-aplica un filtro
 fixlog tui live.log --follow             # tailing en vivo
 ```
 
+Dentro del TUI: `:help` (o `:h`) abre un overlay con el cheatsheet completo de shortcuts y comandos.
+
 #### Layout
 
 ```text
-fixlog /path/to/my.log — 42/5419 (5419)         ← title bar
-+-------------------------------+---------------------+
-| #ord offset  type sndr→tgt raw | tag  name  type raw decoded
-|    #41  4200  D   BRK→OMS  ... | 35   MsgType  char D   NewOrderSingle
-| >  #42  4310  D   BRK→OMS  ... | 55   Symbol   str  AAPL
-|    #43  4420  8   OMS→BRK  ... | 54   Side     char 1   BUY
-|    ...                         | ...
-+-------------------------------+---------------------+
-[follow] sep:Soh  filter: 35=D           42/1535 (5419)    ← status bar
-:filter 35=D▏                                              ← command bar (cuando está activa)
+fixlog /path/to/my.log — 42/5419 (5419)               ← title bar
++-----------------------------+--------------------------+
+| time   message  clordid  st | tag  name   type raw dec |
+|  ...   D  BRK→OMS  ABC12  — | 35   MsgType char D  ... |
+| >...   D  BRK→OMS  ABC13  — | 55   Symbol  str  AAPL   |
+|  ...   8  OMS→BRK  ABC12 Nw | 54   Side    char 1  BUY |
+|  ...                        | ...                      |
++-----------------------------+--------------------------+
+[follow] list  filter: 35=D           42/1535 (5419)     ← status bar
+:filter 35=D▏                                            ← command bar (cuando está activa)
 ```
 
-#### Keybindings
+El panel activo (list / detail) se controla con `Tab` / `Shift+Tab`. En modo raw (`r`) el detalle ocupa todo el ancho y muestra los bytes FIX crudos envueltos, facilitando la selección con el mouse.
 
-**Navegación** (modo normal):
+#### Modos de entrada
 
-| Tecla            | Acción                                  |
-|------------------|-----------------------------------------|
-| `j` / `↓`        | cursor abajo                            |
-| `k` / `↑`        | cursor arriba                           |
-| `g`              | primer mensaje                          |
-| `G`              | último mensaje (activa Follow)          |
-| `Ctrl+D` / `PageDown` | media página abajo                |
-| `Ctrl+U` / `PageUp`   | media página arriba                |
-| `F`              | alternar Follow / Browse                |
+| Modo      | Cómo se entra       | Qué hace                                     |
+|-----------|---------------------|----------------------------------------------|
+| Normal    | arranque / `Esc`    | Navegación + toggles vim-like                |
+| Command   | `:`                 | Escritura de comandos (`:filter`, `:export`…) |
+| Search    | `/`                 | Buscar por expresión DSL                      |
+
+#### Navegación (modo normal)
+
+| Tecla                 | Acción                                                        |
+|-----------------------|---------------------------------------------------------------|
+| `j` / `↓`             | cursor abajo (list o detail según focus)                      |
+| `k` / `↑`             | cursor arriba                                                 |
+| `g`                   | primer elemento (drop a Browse)                               |
+| `G`                   | último elemento (re-entra a Follow si aplica)                 |
+| `Ctrl+D` / `PageDown` | media página abajo                                            |
+| `Ctrl+U` / `PageUp`   | media página arriba                                           |
+| `F`                   | alternar Follow / Browse                                      |
+| `Tab` / `Shift+Tab`   | mover focus entre list y detail                               |
+| `←` / `→`             | scroll horizontal del panel enfocado                          |
+| `0`                   | reset de scrolls (list h, detail h, detail v)                 |
 
 Cualquier movimiento que no sea `G` deja la vista en **Browse**. En Browse el cursor queda fijo aunque lleguen mensajes nuevos; aparece `⬇ N new` en la status bar.
 
-**Comandos** (con `:`):
+#### Detail panel (cuando focus = Detail)
 
-| Comando                | Efecto                                           |
-|------------------------|--------------------------------------------------|
-| `:q` / `:quit`         | salir                                            |
-| `:help` / `:h`         | mostrar cheatsheet en la status bar              |
-| `:filter <expr>` / `:f <expr>` | aplicar filtro (live preview al escribir) |
-| `:filter`              | limpiar el filtro activo                         |
-| `↑` / `↓` (en comando) | historial                                        |
-| `Esc`                  | cancelar (revierte el preview live si aplica)    |
+| Tecla                 | Acción                                                        |
+|-----------------------|---------------------------------------------------------------|
+| `j` / `k` / `g` / `G` | mover el cursor por campo dentro del mensaje                  |
+| `Ctrl+D` / `Ctrl+U`   | media página de campos                                        |
+| `f`                   | filtro desde el campo bajo cursor: `AND tag=value`            |
+| `x`                   | filtro desde el campo bajo cursor: `AND NOT tag=value`        |
 
-**Búsqueda** (con `/`): misma gramática que el filtro; mueve el cursor al siguiente match.
+`f` y `x` respetan la DSL: valores con caracteres especiales se cuotan y escapan automáticamente.
+
+#### Toggles
+
+| Tecla | Toggle                                                                      |
+|-------|-----------------------------------------------------------------------------|
+| `c`   | ocultar / mostrar tags comunes de header+trailer (8,9,10,34,35,49,52,56)    |
+| `H`   | ocultar / mostrar Heartbeats (compone `AND NOT 35=0` en el filtro efectivo) |
+| `r`   | alternar vista raw FIX (SOH → `\|`, envuelto) ↔ tabla de campos resueltos   |
+
+#### Búsqueda (`/`)
+
+Misma gramática que el filtro; mueve el cursor al siguiente match, `n`/`N` iteran reutilizando la expresión ya compilada.
 
 | Tecla   | Acción                                          |
 |---------|-------------------------------------------------|
@@ -179,12 +269,45 @@ Cualquier movimiento que no sea `G` deja la vista en **Browse**. En Browse el cu
 | `N`     | match anterior                                  |
 | `Esc`   | cancelar sin mover cursor                       |
 
-**Yank al clipboard**:
+#### Secuencias de dos teclas
 
-| Secuencia | Contenido copiado                                 |
-|-----------|---------------------------------------------------|
-| `yy`      | bytes crudos del mensaje (SOH rendered como `\|`) |
-| `yY`      | pretty-printed (tabla con tags resueltos)         |
+| Secuencia    | Efecto                                                            |
+|--------------|-------------------------------------------------------------------|
+| `yy`         | yank: bytes crudos del mensaje (SOH rendered como `\|`)           |
+| `yY`         | yank: pretty-printed (tabla con tags resueltos)                   |
+| `dd`         | setear diff slot A al mensaje bajo cursor                          |
+| `dD`         | setear diff slot B y abrir el overlay de diff                     |
+| `m<letra>`   | set bookmark (`a`–`z`, `A`–`Z`) al mensaje bajo cursor            |
+| `'<letra>`   | saltar al bookmark (si está en el filtro actual)                   |
+| `O`          | abrir overlay de order lifecycle (tag 11 del mensaje bajo cursor) |
+
+#### Overlays
+
+| Overlay      | Se abre con               | Cerrar | Acción                                      |
+|--------------|---------------------------|--------|---------------------------------------------|
+| Help         | `:help` / `:h`            | `Esc`  | cheatsheet de shortcuts (scrollable)        |
+| Sessions     | `:sessions`               | `Esc`  | `j`/`k` mueven; `Enter` aplica `49=X AND 56=Y` |
+| Orders       | `O` o `:orders [id]`      | `Esc`  | timeline + Gantt; coloreado por `ExecType`  |
+| Histogram    | `:histogram [bucket]`     | `Esc`  | sparkline + top-20 picos                    |
+| Marks        | `:marks`                  | `Esc`  | lista de bookmarks                          |
+| Diff         | `dd` + `dD` (ambos slots) | `Esc`  | tabla lado a lado, resaltado por diferencia |
+
+#### Comandos (modo Command)
+
+| Comando                        | Efecto                                                                                          |
+|--------------------------------|-------------------------------------------------------------------------------------------------|
+| `:q` / `:quit`                 | salir                                                                                           |
+| `:h` / `:help`                 | abrir el overlay de help                                                                        |
+| `:filter <expr>` / `:f <expr>` | aplicar filtro (live preview al escribir)                                                       |
+| `:filter`                      | limpiar el filtro activo                                                                        |
+| `:sessions`                    | abrir overlay de sesiones                                                                       |
+| `:orders [id]`                 | abrir timeline de una orden; sin `id` usa el tag 11 del mensaje bajo cursor                     |
+| `:histogram [bucket]`          | abrir histograma; `bucket` soporta `Ns` / `Nms` / `Nus` / `Nm` (default: `1s`)                  |
+| `:marks`                       | abrir overlay de bookmarks                                                                      |
+| `:export <fmt> <path>`         | exportar `visible` a archivo; `fmt` ∈ {`csv`, `json`, `fix`, `pretty`}                          |
+| `:diff clear`                  | resetear los dos slots de diff                                                                  |
+| `↑` / `↓` (dentro de `:`)      | historial de comandos                                                                           |
+| `Esc`                          | cancelar (revierte el preview live si aplica; cierra el overlay si hay uno abierto)             |
 
 **Salir**: `q`, `:q`, o `Ctrl+C`.
 
@@ -211,7 +334,7 @@ También respeta `RUST_LOG` si quieres control fino: `RUST_LOG=fixlog_parser=deb
 
 | Aspecto | Soporte |
 |---------|---------|
-| Versiones FIX | 4.4, FIXT.1.1 (session) + 5.0SP2 (application) |
+| Versiones FIX | 4.4, FIXT.1.1 (session) + 5.0 / 5.0 SP1 / 5.0 SP2 (application) |
 | Separador | SOH (`\x01`), `\|`, `^`, `;` — autodetectado |
 | Prefijos de línea | cualquiera (timestamp, logback, PID…) — el parser escanea `8=FIX` |
 | Line ending | LF, CRLF |
@@ -251,14 +374,17 @@ Métricas de referencia (Darwin 25.3.0, criterion `--quick`):
 | `index_amplified/parallel_40MiB`              | ~1.08 GiB/s (**5.1×** vs single-thread) |
 | `tui_bootstrap/1M_messages`                   | ~123 ms                    |
 | `tui_frame/list_detail_status_200x50`         | **~737 µs** (~22× bajo el target de 16 ms) |
-| `tui_filter/apply_35eqD_1M` (full scan)       | ~477 ms                    |
+| `tui_filter/apply_35eqD_1M` (hot-tag pre-filter, Fase 4) | **~156 µs** (~3000× vs ~477 ms pre-Fase 4) |
+| `analysis/session_build_1M`                   | ~1.16 s                    |
+| `analysis/order_lookup_1M` (real fix44-om)    | ~5 µs                      |
+| `analysis/histogram_build_1M`                 | ~500 ms                    |
 
 Los números se re-miden al cerrar cada fase y viven en [`docs/agent/state.md`](docs/agent/state.md).
 
 ## Desarrollo
 
 ```sh
-cargo test --all                             # 189 tests
+cargo test --all                             # 293 tests
 cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --all
 cargo run -p fixlog-cli -- sniff <file>      # ejecutar sin instalar
@@ -281,10 +407,11 @@ Ver [`fixtures/README.md`](fixtures/README.md) para detalles del corpus.
 - **Fase 1** ✓: CLI + parser + diccionarios + sniffer.
 - **Fase 2** ✓: indexación paralela + DSL de filtros + `grep --follow`.
 - **Fase 3** ✓: TUI ratatui con lista virtual, detalle, filtro live, búsqueda, follow/browse, yank.
-- **Fase 4**: análisis avanzado — session tracking, order lifecycle view, diff, bookmarks, export.
-- **Fase 5**: polish — caché de índices serializado, config persistente (`~/.config/fixlog/config.toml`), diccionarios híbridos, multi-file/tabs.
+- **Fase 4** ✓: análisis avanzado — session tracking, order lifecycle view, diff, bookmarks, export, hot-tag pre-filter.
+- **Fase A/B** ✓ (2026-04-18): rediseño del TUI — columnas semánticas, toggles `c`/`H`/`r`, focus entre paneles, filter-from-detail (`f`/`x`), navegación por campo.
+- **Fase 5** (parcial): polish. **Done**: crate `fixlog-render`, diccionarios FIX 5.0 / 5.0 SP1, `QueryExpr: Clone`, analysis pipe-separated. **Backlog**: caché de índices (`<file>.fixlog-idx`), config persistente (`~/.config/fixlog/config.toml`), flag `--strict`, diccionarios híbridos, multi-file/tabs, repeating groups, symbolic query names.
 
-Detalle completo en [`docs/ROADMAP.md`](docs/ROADMAP.md). Plan atómico de cada fase en `docs/PHASE{1,2,3}_PLAN.md`.
+Detalle completo en [`docs/ROADMAP.md`](docs/ROADMAP.md). Plan atómico de cada fase en `docs/PHASE{1,2,3,4,5}_PLAN.md`.
 
 ## Licencia
 

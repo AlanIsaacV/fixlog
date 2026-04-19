@@ -309,6 +309,11 @@ cursor.
 | `→` / `Right`  | Scroll the **focused** panel right by 8 columns          |
 | `←` / `Left`   | Scroll the **focused** panel left by 8 columns           |
 | `0`            | Reset all three scroll offsets (list h, detail h, detail v) |
+| `O`            | Open order lifecycle overlay (tag 11 of message under cursor) |
+| `dd`           | Set diff slot A to current ordinal                        |
+| `dD`           | Set diff slot B and open diff overlay                     |
+| `m<letter>`    | Set bookmark (a–z / A–Z) to current ordinal               |
+| `'<letter>`    | Jump to bookmark (if ordinal is in current filtered view) |
 
 **Focus-sensitive keys.** `j`/`k`/`g`/`G`/`Ctrl+D`/`Ctrl+U` and the
 arrows all respect `AppState.focus`:
@@ -362,15 +367,25 @@ Any cursor motion other than `G` drops the view out of `Follow` into
 ## Command grammar
 
 ```
-:q                      → quit
-:quit                   → quit
-:help / :h              → show keybinding cheatsheet in status
+:q / :quit              → quit
+:help / :h              → open the Help overlay (Overlay::Help { scroll })
 :filter <expr>          → apply filter (see fixlog-query grammar)
 :f <expr>               → short form
 :filter                 → clear filter
+:sessions               → open Sessions overlay (SessionMap::build on-demand)
+:orders [id]            → open Orders overlay; sin id extrae tag 11 del cursor
+:histogram [bucket]     → open Histogram overlay; bucket default 1s (Ns/Nms/Nus/Nm)
+:marks                  → open Marks overlay
+:export <fmt> <path>    → export state.visible (csv / json / fix / pretty)
+:diff clear             → reset diff_slots y cierra overlay
 ```
 
 Any other head keyword sets `status.level = Error` with `unknown command`.
+
+The Help overlay renders a static cheatsheet from `view::help::lines()`. Its
+content is navigable with `j`/`k`, `Ctrl+D`/`Ctrl+U`, `g`/`G`; `Esc` closes
+it. See `crates/fixlog-tui/src/view/help.rs` — add entries there when new
+bindings land so the in-TUI help doesn't drift.
 
 ## Live filter preview
 
