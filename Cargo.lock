@@ -475,6 +475,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "fixlog-core",
+ "rayon",
  "smallvec",
  "thiserror",
  "tracing",

@@ -8,9 +8,10 @@
 use std::time::Duration;
 
 use fixlog_core::parser::TAG_SENDING_TIME;
-use fixlog_core::{LogFormat, LogIndex, parse_one_with_format};
+use fixlog_core::{LogFormat, LogIndex};
+use rayon::prelude::*;
 
-use crate::util::{find_tag, parse_sending_time, system_time_to_nanos};
+use crate::util::{extract_tag_raw, parse_sending_time, system_time_to_nanos};
 
 /// One uniform-width time bucket.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -30,35 +31,57 @@ pub struct Histogram {
 }
 
 impl Histogram {
-    /// Single-pass build over `index.messages`.
+    /// Build a histogram over `index.messages`.
     ///
     /// `bucket` is clamped to a minimum of 1 ns to avoid division by zero.
     /// An empty index (or an index where no message has a valid timestamp)
     /// produces a histogram with an empty `bins` vector.
+    ///
+    /// Implementation notes — the hot path:
+    /// - Timestamps are extracted with a narrow scan
+    ///   ([`extract_tag_raw`]) that short-circuits on the first match,
+    ///   avoiding the per-message allocation and full tokenization that
+    ///   a [`parse_one_with_format`] call would incur.
+    /// - The per-message extraction runs in parallel over `rayon` since
+    ///   it's embarrassingly parallel and dominated the old build time.
+    /// - The reduction stage computes `t_min` / `t_max` and collects
+    ///   valid timestamps + drop count in a single pass, without a
+    ///   separate `.iter().min()` / `.iter().max()` scan.
     pub fn build(index: &LogIndex, buf: &[u8], format: &LogFormat, bucket: Duration) -> Self {
         let bucket_ns_u64 = bucket.as_nanos().max(1).min(u64::MAX as u128) as u64;
         let bucket_ns = bucket_ns_u64 as u128;
 
-        // First pass: collect timestamps (and count drops) so we can bound the range.
-        let mut times: Vec<u128> = Vec::with_capacity(index.len());
+        // Per-ordinal timestamp extraction. `None` means the message
+        // lacked a parseable tag 52 (or was out of range) and must count
+        // against `dropped_no_time`.
+        let results: Vec<Option<u128>> = (0..index.len())
+            .into_par_iter()
+            .map(|ord| {
+                let bytes = index.message_bytes(buf, ord)?;
+                let raw = extract_tag_raw(bytes, format, TAG_SENDING_TIME)?;
+                parse_sending_time(raw).and_then(system_time_to_nanos)
+            })
+            .collect();
+
+        let mut times: Vec<u128> = Vec::with_capacity(results.len());
         let mut dropped: u32 = 0;
-        for ord in 0..index.len() {
-            let Some(bytes) = index.message_bytes(buf, ord) else {
-                dropped = dropped.saturating_add(1);
-                continue;
-            };
-            let Ok((msg, _)) = parse_one_with_format(bytes, format) else {
-                dropped = dropped.saturating_add(1);
-                continue;
-            };
-            let Some(t) = find_tag(&msg, TAG_SENDING_TIME)
-                .and_then(parse_sending_time)
-                .and_then(system_time_to_nanos)
-            else {
-                dropped = dropped.saturating_add(1);
-                continue;
-            };
-            times.push(t);
+        let mut t_min: u128 = u128::MAX;
+        let mut t_max: u128 = 0;
+        for r in results {
+            match r {
+                Some(t) => {
+                    if t < t_min {
+                        t_min = t;
+                    }
+                    if t > t_max {
+                        t_max = t;
+                    }
+                    times.push(t);
+                }
+                None => {
+                    dropped = dropped.saturating_add(1);
+                }
+            }
         }
 
         if times.is_empty() {
@@ -69,8 +92,6 @@ impl Histogram {
             };
         }
 
-        let t_min = *times.iter().min().unwrap();
-        let t_max = *times.iter().max().unwrap();
         let start = (t_min / bucket_ns) * bucket_ns;
         let end = ((t_max / bucket_ns) + 1) * bucket_ns;
         let n_bins = ((end - start) / bucket_ns) as usize;

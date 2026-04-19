@@ -3,12 +3,55 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use fixlog_core::RawMessage;
+use fixlog_core::format::LogFormat;
 
 /// Linear scan over `msg.tags` for `tag`. For ≤ 32 tags this beats any hash-map
 /// lookup. Returns the raw `&[u8]` borrowed from the mmap.
 #[inline]
 pub fn find_tag<'a>(msg: &RawMessage<'a>, tag: u32) -> Option<&'a [u8]> {
     msg.tags.iter().find(|(t, _)| *t == tag).map(|(_, v)| *v)
+}
+
+/// Scan a raw FIX message body for the first occurrence of `tag` and
+/// return its value slice. Stops on the first match so it's O(tag_pos)
+/// rather than O(n_tags) and — crucially — avoids constructing a full
+/// [`RawMessage`].
+///
+/// This is the hot-path helper for analyses that only need a single tag
+/// (e.g. histogram over tag 52 / SendingTime) and whose cost is dominated
+/// by per-message tokenization when done via [`parse_one_with_format`].
+///
+/// `bytes` must be a message slice starting at `8=FIX` (or the first
+/// field post-line-prefix — i.e. what [`LogIndex::message_bytes`] returns).
+pub fn extract_tag_raw<'a>(bytes: &'a [u8], format: &LogFormat, tag: u32) -> Option<&'a [u8]> {
+    let sep = format.separator.as_byte();
+    let mut i = 0;
+    while i < bytes.len() {
+        // Parse the tag up to '='.
+        let eq = memchr_byte(b'=', &bytes[i..])?;
+        let tag_bytes = &bytes[i..i + eq];
+        let value_start = i + eq + 1;
+        // Find the separator ending this value.
+        let end_rel = match memchr_byte(sep, &bytes[value_start..]) {
+            Some(n) => n,
+            // No trailing separator: treat the remainder as the final value.
+            None => bytes.len() - value_start,
+        };
+        let value = &bytes[value_start..value_start + end_rel];
+        if let Some(parsed) = parse_u32_ascii(tag_bytes)
+            && parsed == tag
+        {
+            return Some(value);
+        }
+        // Advance past the separator. If there was none, we're at EOF.
+        i = value_start + end_rel + 1;
+    }
+    None
+}
+
+#[inline]
+fn memchr_byte(needle: u8, haystack: &[u8]) -> Option<usize> {
+    haystack.iter().position(|&b| b == needle)
 }
 
 /// Parse an ASCII u32 without allocating. Returns `None` on empty input, a
@@ -138,6 +181,32 @@ mod tests {
         let base = parse_sending_time(b"20260417-12:34:56").unwrap();
         let d = t.duration_since(base).unwrap();
         assert_eq!(d.as_nanos(), 123_456_789);
+    }
+
+    #[test]
+    fn extract_tag_raw_returns_first_match() {
+        use fixlog_core::sniff;
+        let msg = b"8=FIX.4.4\x019=40\x0135=D\x0134=7\x0149=A\x0156=B\x0152=20260417-12:34:56\x0155=AAPL\x0110=000\x01";
+        let fmt = sniff(msg).expect("sniff");
+        assert_eq!(extract_tag_raw(msg, &fmt, 35), Some(b"D".as_slice()));
+        assert_eq!(
+            extract_tag_raw(msg, &fmt, 52),
+            Some(b"20260417-12:34:56".as_slice())
+        );
+        assert_eq!(extract_tag_raw(msg, &fmt, 999), None);
+    }
+
+    #[test]
+    fn extract_tag_raw_handles_missing_trailing_separator() {
+        // Synthesize a buffer without a trailing separator on the last
+        // field — still recoverable.
+        let msg = b"8=FIX.4.4\x0152=2026";
+        use fixlog_core::sniff;
+        // Use the preceding buffer with a proper sep for sniffing, then
+        // pass the stripped one in.
+        let full = b"8=FIX.4.4\x019=5\x0152=2026\x0110=000\x01";
+        let fmt = sniff(full).expect("sniff");
+        assert_eq!(extract_tag_raw(msg, &fmt, 52), Some(b"2026".as_slice()));
     }
 
     #[test]

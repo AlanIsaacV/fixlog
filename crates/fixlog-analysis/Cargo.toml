@@ -10,6 +10,7 @@ description  = "Session tracking, order lifecycle, and temporal histogram analys
 
 [dependencies]
 fixlog-core = { path = "../fixlog-core" }
+rayon       = "1"
 smallvec    = "1"
 thiserror   = "2"
 tracing     = "0.1"
