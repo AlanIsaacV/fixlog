@@ -31,6 +31,10 @@ use fixlog_parser::{
 pub const TAG_CL_ORD_ID: u32 = 11;
 /// Tag `37` — OrderID. Exchange-assigned order identifier.
 pub const TAG_ORDER_ID: u32 = 37;
+/// Tag `41` — OrigClOrdID. Cancel/replace requests point here at the
+/// original ClOrdID they target, which is how order-lifecycle queries
+/// follow the chain once a new ClOrdID is issued.
+pub const TAG_ORIG_CL_ORD_ID: u32 = 41;
 
 /// Stack-allocated byte value for the secondary key. 16 bytes cover most enum/CompID
 /// values while still hashing cheaply. Longer values still work — they just heap-allocate.
@@ -46,7 +50,7 @@ pub type Value = SmallVec<[u8; 16]>;
 pub struct HotTags(SmallVec<[u32; 8]>);
 
 impl HotTags {
-    /// Standard set: `35, 49, 56, 11, 34, 37`.
+    /// Standard set: `35, 49, 56, 11, 34, 37, 41`.
     pub fn default_set() -> Self {
         Self(SmallVec::from_slice(&[
             TAG_MSG_TYPE,
@@ -55,6 +59,7 @@ impl HotTags {
             TAG_CL_ORD_ID,
             TAG_MSG_SEQ_NUM,
             TAG_ORDER_ID,
+            TAG_ORIG_CL_ORD_ID,
         ]))
     }
 

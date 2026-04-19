@@ -4,12 +4,16 @@
 //! [`LogIndex`] secondary map:
 //!
 //! 1. `secondary.lookup(11, clordid)` → initial ordinals.
-//! 2. Re-parse each to collect the `OrderID` (tag 37) values observed.
-//! 3. For each observed `OrderID`, `secondary.lookup(37, ord_id)` expands
+//! 2. `secondary.lookup(41, clordid)` → messages referencing `clordid`
+//!    as `OrigClOrdID` (cancel/replace requests). For each such message,
+//!    read its own tag 11 and feed it back into the worklist so the
+//!    whole replacement chain is followed to fixed point.
+//! 3. Re-parse the union from steps 1–2 to collect the `OrderID`
+//!    (tag 37) values observed.
+//! 4. For each observed `OrderID`, `secondary.lookup(37, ord_id)` expands
 //!    the set to include execution reports that only reference `37`
-//!    (common after the first ack, and essential for `F`/`G` cancel and
-//!    replace flows where `11` becomes the new request ID).
-//! 4. Dedup, sort ascending (ordinals are monotonic in time), and
+//!    (common after the first ack).
+//! 5. Dedup, sort ascending (ordinals are monotonic in time), and
 //!    materialize [`OrderEvent`]s.
 //!
 //! # Ownership
@@ -21,7 +25,7 @@
 use std::collections::HashSet;
 use std::time::SystemTime;
 
-use fixlog_core::index::secondary::{TAG_CL_ORD_ID, TAG_ORDER_ID};
+use fixlog_core::index::secondary::{TAG_CL_ORD_ID, TAG_ORDER_ID, TAG_ORIG_CL_ORD_ID};
 use fixlog_core::parser::{TAG_MSG_TYPE, TAG_SENDING_TIME};
 use fixlog_core::{LogFormat, LogIndex, parse_one_with_format};
 use smallvec::SmallVec;
@@ -30,6 +34,9 @@ use crate::util::{find_tag, parse_sending_time};
 
 /// Tag `14` — CumQty.
 pub const TAG_CUM_QTY: u32 = 14;
+/// Tag `31` — LastPx. Execution price of the last fill in the current
+/// ExecutionReport. Absent on pending/new/cancel events.
+pub const TAG_LAST_PX: u32 = 31;
 /// Tag `39` — OrdStatus.
 pub const TAG_ORD_STATUS: u32 = 39;
 /// Tag `150` — ExecType.
@@ -44,6 +51,7 @@ pub struct OrderEvent {
     pub exec_type: Option<SmallVec<[u8; 2]>>,
     pub ord_status: Option<SmallVec<[u8; 2]>>,
     pub cum_qty: Option<SmallVec<[u8; 16]>>,
+    pub last_px: Option<SmallVec<[u8; 16]>>,
 }
 
 /// Full ordered timeline for a single ClOrdID chain.
@@ -55,19 +63,53 @@ pub struct OrderTimeline {
 }
 
 impl OrderTimeline {
-    /// Reconstruct the timeline for `clordid`. Returns `None` if no message
-    /// in the index has `11=<clordid>`.
+    /// Reconstruct the timeline for `clordid`. Returns `None` if the
+    /// given id is never referenced — neither as a tag 11 nor as a tag 41
+    /// (OrigClOrdID) — anywhere in the index.
     pub fn build(index: &LogIndex, buf: &[u8], format: &LogFormat, clordid: &[u8]) -> Option<Self> {
-        let initial = index.secondary.lookup(TAG_CL_ORD_ID, clordid);
-        if initial.is_empty() {
+        // Worklist over the family of ClOrdIDs reachable from `clordid`
+        // via `OrigClOrdID` (tag 41). A cancel/replace carries a fresh
+        // `11=<new>` and points back at the predecessor through
+        // `41=<old>`; iterating to fixed point collects the full chain.
+        let mut ordinals_set: HashSet<u32> = HashSet::new();
+        let mut cl_ids_seen: HashSet<Vec<u8>> = HashSet::new();
+        let mut cl_ids_pending: Vec<Vec<u8>> = vec![clordid.to_vec()];
+
+        while let Some(cid) = cl_ids_pending.pop() {
+            if !cl_ids_seen.insert(cid.clone()) {
+                continue;
+            }
+            // Direct: messages whose own ClOrdID is this id.
+            let direct = index.secondary.lookup(TAG_CL_ORD_ID, &cid);
+            ordinals_set.extend(direct.iter().copied());
+            // Referencers: cancel/replace requests whose OrigClOrdID is
+            // this id. Their own tag 11 is a new ClOrdID that extends the
+            // chain; queue it for the next iteration.
+            let referers = index.secondary.lookup(TAG_ORIG_CL_ORD_ID, &cid);
+            ordinals_set.extend(referers.iter().copied());
+            for &ord in referers {
+                let Some(bytes) = index.message_bytes(buf, ord as usize) else {
+                    continue;
+                };
+                let Ok((msg, _)) = parse_one_with_format(bytes, format) else {
+                    continue;
+                };
+                if let Some(new_cl) = find_tag(&msg, TAG_CL_ORD_ID)
+                    && !cl_ids_seen.contains(new_cl)
+                {
+                    cl_ids_pending.push(new_cl.to_vec());
+                }
+            }
+        }
+
+        if ordinals_set.is_empty() {
             return None;
         }
 
-        // First pass: collect all OrderID values reachable via the initial
-        // ordinals. Use a set because the same OrderID can appear on many
-        // messages, and the second-pass lookup is non-cheap if duplicated.
+        // Expand via OrderID (tag 37) so execution reports that only
+        // reference the exchange-assigned id are included.
         let mut order_ids_set: HashSet<Vec<u8>> = HashSet::new();
-        for &ord in initial {
+        for &ord in &ordinals_set {
             let Some(bytes) = index.message_bytes(buf, ord as usize) else {
                 continue;
             };
@@ -78,15 +120,13 @@ impl OrderTimeline {
                 order_ids_set.insert(oid.to_vec());
             }
         }
-
-        // Dedup the ordinal set across both lookups.
-        let mut ordinals: Vec<u32> = initial.to_vec();
         for oid in &order_ids_set {
             let expansion = index.secondary.lookup(TAG_ORDER_ID, oid);
-            ordinals.extend_from_slice(expansion);
+            ordinals_set.extend(expansion.iter().copied());
         }
+
+        let mut ordinals: Vec<u32> = ordinals_set.into_iter().collect();
         ordinals.sort_unstable();
-        ordinals.dedup();
 
         // Materialize the events.
         let mut events = Vec::with_capacity(ordinals.len());
@@ -104,6 +144,7 @@ impl OrderTimeline {
             let exec_type = find_tag(&msg, TAG_EXEC_TYPE).map(SmallVec::from_slice);
             let ord_status = find_tag(&msg, TAG_ORD_STATUS).map(SmallVec::from_slice);
             let cum_qty = find_tag(&msg, TAG_CUM_QTY).map(SmallVec::from_slice);
+            let last_px = find_tag(&msg, TAG_LAST_PX).map(SmallVec::from_slice);
 
             events.push(OrderEvent {
                 ordinal: ord,
@@ -112,6 +153,7 @@ impl OrderTimeline {
                 exec_type,
                 ord_status,
                 cum_qty,
+                last_px,
             });
         }
 
@@ -331,5 +373,71 @@ mod tests {
         let tl = OrderTimeline::build(&index, &buf, &fmt, b"ABC").unwrap();
         assert_eq!(render_gantt(&tl, 2).len(), 10);
         assert_eq!(render_gantt(&tl, 9999).len(), 500);
+    }
+
+    /// A cancel request issued before the exchange has assigned an
+    /// `OrderID` carries only `11=<new>` and `41=<orig>`. The previous
+    /// lookup chain (11 → 37 → 37) could not reach it. With the OrigClOrdID
+    /// pushdown, it should now be part of the original order's timeline.
+    #[test]
+    fn cancel_request_without_order_id_is_included() {
+        let tail = "49=A\x0156=B\x01";
+        let t = |sec| format!("52=20260417-12:34:{sec:02}\x01");
+        let mut out = Vec::new();
+        // 1. NewOrderSingle: 11=NEW1, no OrderID yet.
+        out.extend(build_msg(&format!(
+            "35=D\x0134=1\x01{tail}{}11=NEW1\x0155=AAPL\x01",
+            t(1)
+        )));
+        // 2. OrderCancelRequest before ack: 11=CXL1, 41=NEW1, no 37.
+        out.extend(build_msg(&format!(
+            "35=F\x0134=2\x01{tail}{}11=CXL1\x0141=NEW1\x01",
+            t(2)
+        )));
+        let fmt = sniff(&out).expect("sniff");
+        let index = build_from_bytes(&out, &fmt);
+        let tl = OrderTimeline::build(&index, &out, &fmt, b"NEW1").expect("NEW1 timeline");
+        assert_eq!(
+            tl.events.len(),
+            2,
+            "cancel without OrderID must be included"
+        );
+        assert_eq!(tl.events[0].msg_type.as_slice(), b"D");
+        assert_eq!(tl.events[1].msg_type.as_slice(), b"F");
+    }
+
+    /// A replace chain `A → B → C` (two consecutive OrderCancelReplace
+    /// requests) must be followed to fixed point — querying `A` has to
+    /// surface the entries for `B` and `C` too, even if they only share
+    /// the `41` back-pointer (no shared OrderID).
+    #[test]
+    fn replace_chain_is_followed_transitively() {
+        let tail = "49=A\x0156=B\x01";
+        let t = |sec| format!("52=20260417-12:34:{sec:02}\x01");
+        let mut out = Vec::new();
+        // Chain: A → B → C via OrigClOrdID, no OrderID available yet.
+        out.extend(build_msg(&format!(
+            "35=D\x0134=1\x01{tail}{}11=A\x0155=AAPL\x01",
+            t(1)
+        )));
+        out.extend(build_msg(&format!(
+            "35=G\x0134=2\x01{tail}{}11=B\x0141=A\x01",
+            t(2)
+        )));
+        out.extend(build_msg(&format!(
+            "35=G\x0134=3\x01{tail}{}11=C\x0141=B\x01",
+            t(3)
+        )));
+        let fmt = sniff(&out).expect("sniff");
+        let index = build_from_bytes(&out, &fmt);
+        let tl = OrderTimeline::build(&index, &out, &fmt, b"A").expect("A timeline");
+        assert_eq!(
+            tl.events.len(),
+            3,
+            "transitive chain A→B→C must reach 3 events"
+        );
+        assert_eq!(tl.events[0].msg_type.as_slice(), b"D");
+        assert_eq!(tl.events[1].msg_type.as_slice(), b"G");
+        assert_eq!(tl.events[2].msg_type.as_slice(), b"G");
     }
 }
