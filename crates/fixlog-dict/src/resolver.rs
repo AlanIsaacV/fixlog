@@ -5,7 +5,7 @@ use fixlog_parser::{RawMessage, TAG_BEGIN_STRING, TAG_MSG_TYPE};
 
 use crate::{
     DictChain, FixVersion, chain_enum_value_label, chain_field_by_tag, chain_for,
-    chain_msg_type_label,
+    chain_msg_type_label, group_members,
 };
 
 /// Tag `1128` — `ApplVerID`. Carried on FIXT.1.1 Logon (and some app messages)
@@ -28,6 +28,12 @@ pub struct ResolvedField<'a> {
     /// Human-readable label for enum-valued fields. `None` for non-enum fields
     /// or when the wire value is not listed in the dictionary.
     pub value_label: Option<&'static str>,
+    /// Nesting depth inside a repeating group. `0` at top level; `1` for
+    /// members of a top-level group (all fields between a `NumInGroup`
+    /// counter and the first non-member tag). Deeper nesting is reserved
+    /// for future use — the current resolver only flattens to a single
+    /// layer.
+    pub depth: u8,
 }
 
 /// A raw message after dictionary resolution.
@@ -58,9 +64,16 @@ pub fn resolve<'a>(msg: &RawMessage<'a>) -> ResolvedMessage<'a> {
 ///
 /// Useful when the caller already knows the session's version (e.g. it saw
 /// the Logon earlier) and wants to avoid re-inferring the chain per message.
+///
+/// Repeating-group awareness: when a field's tag is a known group counter
+/// (see [`group_members`]), the resolver flags the contiguous run of
+/// member tags that follow it with `depth = 1` so the TUI can render the
+/// block indented. The run ends at the first tag that's not in the
+/// counter's member set.
 pub fn resolve_with_chain<'a>(msg: &RawMessage<'a>, chain: DictChain) -> ResolvedMessage<'a> {
     let mut fields: Vec<ResolvedField<'a>> = Vec::with_capacity(msg.tags.len());
     let mut msg_type_name: Option<&'static str> = None;
+    let mut active_group: Option<&'static [u32]> = None;
 
     for &(tag, value) in &msg.tags {
         let name = chain_field_by_tag(chain, tag).map(|d| d.name);
@@ -73,11 +86,24 @@ pub fn resolve_with_chain<'a>(msg: &RawMessage<'a>, chain: DictChain) -> Resolve
         } else {
             chain_enum_value_label(chain, tag, value)
         };
+
+        // Depth tracking. A group counter always emits at depth 0; its
+        // members follow at depth 1 until a non-member tag closes the
+        // run. Encountering a *new* counter opens a fresh group and
+        // replaces the active set.
+        let (depth, next_active) = match (active_group, group_members(tag)) {
+            (_, Some(members)) => (0, Some(members)),
+            (Some(members), None) if members.contains(&tag) => (1, active_group),
+            (_, None) => (0, None),
+        };
+        active_group = next_active;
+
         fields.push(ResolvedField {
             tag,
             name,
             value,
             value_label,
+            depth,
         });
     }
 
@@ -172,5 +198,35 @@ mod tests {
         let side = res.fields.iter().find(|f| f.tag == 54).unwrap();
         assert_eq!(side.name, Some("Side"));
         assert_eq!(side.value_label, Some("BUY"));
+    }
+
+    /// MarketDataSnapshot-shaped body with `268=3` and three blocks of
+    /// `{269, 270, 271}`. Verifies `268` stays at depth 0, all three
+    /// repetitions' members land at depth 1, and a post-group tag (`10`
+    /// is added by `build_with_trailer`) drops back to depth 0.
+    #[test]
+    fn mdentries_group_members_get_depth_one() {
+        let body = b"35=W\x0155=AAPL\x01268=3\x01\
+269=0\x01270=100.0\x01271=10\x01\
+269=1\x01270=100.5\x01271=20\x01\
+269=2\x01270=101.0\x01271=30\x01";
+        let raw = build_with_trailer(body, b"FIX.4.4");
+        let msg = build(&raw);
+        let res = resolve(&msg);
+
+        // 55 (Symbol) comes before the counter — depth 0.
+        assert_eq!(res.fields.iter().find(|f| f.tag == 55).unwrap().depth, 0);
+        // Counter itself — depth 0.
+        assert_eq!(res.fields.iter().find(|f| f.tag == 268).unwrap().depth, 0);
+        // All three repetitions of 269/270/271 — depth 1.
+        for tag in [269u32, 270, 271] {
+            let members: Vec<_> = res.fields.iter().filter(|f| f.tag == tag).collect();
+            assert_eq!(members.len(), 3, "expected 3 occurrences of tag {tag}");
+            for f in members {
+                assert_eq!(f.depth, 1, "tag {tag} expected depth 1, got {}", f.depth);
+            }
+        }
+        // Trailer (10 CheckSum) closes the group — depth 0 again.
+        assert_eq!(res.fields.iter().find(|f| f.tag == 10).unwrap().depth, 0);
     }
 }

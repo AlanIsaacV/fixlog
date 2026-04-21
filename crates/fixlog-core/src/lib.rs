@@ -21,7 +21,7 @@ pub use fixlog_render as render;
 /// without pulling the sub-modules.
 pub use fixlog_dict::{
     CHAIN_FIX44, CHAIN_FIXT11_FIX44, CHAIN_FIXT11_FIX50SP2, DictChain, FieldDef, FixVersion,
-    ResolvedField, ResolvedMessage, chain_for, resolve, resolve_with_chain,
+    ResolvedField, ResolvedMessage, chain_for, group_members, resolve, resolve_with_chain,
 };
 pub use fixlog_format::{LogFormat, sniff};
 pub use fixlog_index::{

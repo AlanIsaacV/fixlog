@@ -18,8 +18,10 @@
 //! `BeginString` and, when present, `ApplVerID` (tag 1128).
 
 mod generated;
+pub mod groups;
 pub mod resolver;
 
+pub use groups::group_members;
 pub use resolver::{ResolvedField, ResolvedMessage, resolve, resolve_with_chain};
 
 /// Description of a single FIX field, as declared in the dictionary.

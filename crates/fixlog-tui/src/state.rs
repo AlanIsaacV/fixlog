@@ -132,6 +132,10 @@ pub struct ResolvedFieldOwned {
     pub field_type: Option<&'static str>,
     pub value: Vec<u8>,
     pub value_label: Option<&'static str>,
+    /// Nesting depth inside a repeating group. `0` for top-level fields
+    /// (including the `NumInGroup` counter itself); `1` for members of
+    /// a group. Drives indentation in the detail view.
+    pub depth: u8,
 }
 
 /// Owned counterpart of [`fixlog_core::dict::ResolvedMessage`]. See
@@ -155,6 +159,7 @@ impl ResolvedMessageOwned {
                 field_type: chain_field_by_tag(chain, f.tag).map(|d| d.field_type),
                 value: f.value.to_vec(),
                 value_label: f.value_label,
+                depth: f.depth,
             })
             .collect();
         Self {

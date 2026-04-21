@@ -80,6 +80,7 @@ mod tests {
                 field_type: Some("char"),
                 value: b"D".to_vec(),
                 value_label: Some("NEW_ORDER_SINGLE"),
+                depth: 0,
             }],
         };
         let out = pretty_text(&msg);

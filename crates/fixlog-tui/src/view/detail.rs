@@ -9,6 +9,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, Wrap};
 
+use fixlog_core::dict::group_members;
+
 use crate::state::{AppState, Focus, ResolvedMessageOwned};
 
 /// Session-layer header and trailer tags. Hidden when `state.skip_common`
@@ -216,9 +218,27 @@ fn render_fields(
         .skip(v_offset)
         .take(viewport_rows.max(1))
         .map(|(idx, f)| {
+            let is_counter = f.depth == 0 && group_members(f.tag).is_some();
+            let name_text = if f.depth > 0 {
+                format!("  └ {}", f.name.unwrap_or("?"))
+            } else {
+                f.name.unwrap_or("?").to_string()
+            };
+            let name_cell = if is_counter {
+                Cell::from(name_text).style(
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else if f.depth > 0 {
+                Cell::from(name_text).style(Style::default().fg(Color::DarkGray))
+            } else {
+                Cell::from(name_text)
+            };
+
             let row = Row::new(vec![
                 Cell::from(f.tag.to_string()),
-                Cell::from(f.name.unwrap_or("?")),
+                name_cell,
                 Cell::from(f.field_type.unwrap_or("-")),
                 Cell::from(h_scroll_str(&raw_value(&f.value), offset)),
                 Cell::from(h_scroll_str(f.value_label.unwrap_or(""), offset)),

@@ -18,12 +18,14 @@ fn sample_resolved<'a>() -> ResolvedMessage<'a> {
                 name: Some("MsgType"),
                 value: b"A",
                 value_label: Some("Logon"),
+                depth: 0,
             },
             ResolvedField {
                 tag: 49,
                 name: Some("SenderCompID"),
                 value: b"SENDER",
                 value_label: None,
+                depth: 0,
             },
         ],
     }
