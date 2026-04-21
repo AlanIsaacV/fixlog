@@ -67,15 +67,24 @@ enum Command {
     ///   fixlog tui file.log
     ///   fixlog tui file.log --filter "35=D"
     ///   fixlog tui live.log --follow
+    ///   fixlog tui file.log --sort seq            # list by MsgSeqNum (34)
+    ///   rg "35=D" logs/*.log | fixlog tui         # pipe input via stdin
     Tui {
-        /// Path to the log file.
-        file: PathBuf,
+        /// Path to the log file. Omit to read from stdin (pipe).
+        file: Option<PathBuf>,
         /// Optional initial filter (same grammar as `grep --filter`).
         #[arg(long)]
         filter: Option<String>,
         /// Watch the file for growth/rotation and append new messages live.
+        /// Not available with stdin input.
         #[arg(short = 'F', long)]
         follow: bool,
+        /// Initial sort criterion for the list (toggled at runtime with
+        /// `o`). `natural` keeps file order; useful when resend requests
+        /// create duplicate SendingTimes and you want to see messages in
+        /// their generated order (34 / 60).
+        #[arg(long, value_enum, default_value_t = SortArg::Natural)]
+        sort: SortArg,
     },
     /// Aggregate messages by `(SenderCompID, TargetCompID)` session pair.
     ///
@@ -132,6 +141,30 @@ enum ParseFormat {
     Json,
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+enum SortArg {
+    /// File order — the order messages were written.
+    Natural,
+    /// Tag 34 MsgSeqNum, numerically.
+    Seq,
+    /// Tag 60 TransactTime, chronologically.
+    Transact,
+    /// Tag 52 SendingTime, chronologically.
+    Sending,
+}
+
+impl From<SortArg> for fixlog_tui::state::SortKey {
+    fn from(s: SortArg) -> Self {
+        use fixlog_tui::state::SortKey;
+        match s {
+            SortArg::Natural => SortKey::Natural,
+            SortArg::Seq => SortKey::MsgSeqNum,
+            SortArg::Transact => SortKey::TransactTime,
+            SortArg::Sending => SortKey::SendingTime,
+        }
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     init_tracing(cli.verbose);
@@ -162,7 +195,8 @@ fn main() -> Result<()> {
             file,
             filter,
             follow,
-        } => commands::tui::run(&file, filter, follow),
+            sort,
+        } => commands::tui::run(file.as_deref(), filter, follow, sort.into()),
         Command::Sessions { file, format } => commands::sessions::run(&file, format),
         Command::Orders {
             file,

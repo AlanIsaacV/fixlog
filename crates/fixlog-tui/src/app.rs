@@ -13,8 +13,8 @@ use crate::event::Event;
 use crate::input::{Action, map_event, map_event_digit_priority};
 use crate::search::{self, Direction, Hit};
 use crate::state::{
-    AppState, Focus, InputMode, Overlay, StatusMessage, ViewMode, bootstrap,
-    recompute_effective_filter, restore_filter, snapshot_filter,
+    AppState, Focus, InputMode, Overlay, StatusMessage, ViewMode, bootstrap_with_sort,
+    recompute_effective_filter, restore_filter, snapshot_filter, sort_visible,
 };
 use crate::view::sessions::session_at;
 
@@ -28,7 +28,7 @@ pub struct App {
 impl App {
     /// Build the app by bootstrapping its state from the config.
     pub fn bootstrap(cfg: &TuiConfig) -> Result<Self> {
-        let state = bootstrap(&cfg.path, cfg.initial_filter.as_deref())?;
+        let state = bootstrap_with_sort(&cfg.path, cfg.initial_filter.as_deref(), cfg.sort_key)?;
         Ok(Self {
             state,
             should_quit: false,
@@ -279,7 +279,33 @@ impl App {
                 self.state.status = StatusMessage::info(label);
             }
             Action::FilterFromDetail { negated } => self.filter_from_detail(negated),
+            Action::CycleSortKey => self.cycle_sort_key(),
         }
+    }
+
+    /// Advance `sort_key` to the next value and re-sort the currently
+    /// visible list in place. The cursor tracks the message it pointed
+    /// at before the sort so the user doesn't lose their spot when
+    /// rotating through modes.
+    fn cycle_sort_key(&mut self) {
+        let anchor_ord = self.state.visible.get(self.state.cursor).copied();
+        self.state.sort_key = self.state.sort_key.cycle();
+        sort_visible(
+            &mut self.state.visible,
+            &self.state.mmap,
+            &self.state.index,
+            &self.state.format,
+            self.state.sort_key,
+        );
+        if let Some(ord) = anchor_ord
+            && let Some(idx) = self.state.visible.iter().position(|&o| o == ord)
+        {
+            self.state.cursor = idx;
+        } else {
+            self.state.cursor = self.state.visible.len().saturating_sub(1);
+        }
+        self.state.viewport_top = 0;
+        self.state.status = StatusMessage::info(format!("sort: {}", self.state.sort_key.label()));
     }
 
     /// Build a filter predicate from the row currently highlighted in the

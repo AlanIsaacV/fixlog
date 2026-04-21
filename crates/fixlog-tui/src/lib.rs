@@ -38,13 +38,19 @@ pub mod view;
 
 use crate::app::App;
 use crate::follow::FollowWatcher;
+use crate::state::SortKey;
 use crate::terminal::TerminalGuard;
 
 /// Configuration for a single TUI session.
 ///
 /// Constructed by the caller (usually the `fixlog tui` CLI subcommand) and
 /// handed to [`run`]. All fields are owned so the config can outlive argv.
-#[derive(Debug, Clone)]
+///
+/// `Default` is provided so call-sites can fill only the fields they care
+/// about via `TuiConfig { path, ..Default::default() }`. The default
+/// `path` is empty — the caller is expected to replace it before calling
+/// [`run`].
+#[derive(Debug, Clone, Default)]
 pub struct TuiConfig {
     /// Path to the FIX log to open. Read via `memmap2`; must be a regular file.
     pub path: PathBuf,
@@ -54,6 +60,9 @@ pub struct TuiConfig {
     /// Optional filter expression (same grammar as `fixlog grep --filter`),
     /// applied after bootstrap so the initial view is already filtered.
     pub initial_filter: Option<String>,
+    /// Initial sort criterion for the visible list. Toggled at runtime with
+    /// `o`. Default is `SortKey::Natural` (file order).
+    pub sort_key: SortKey,
 }
 
 /// Errors surfaced from the TUI event loop.

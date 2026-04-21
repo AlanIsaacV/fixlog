@@ -21,11 +21,14 @@ use memmap2::Mmap;
 use fixlog_analysis::histogram::Histogram;
 use fixlog_analysis::orders::OrderTimeline;
 use fixlog_analysis::sessions::SessionMap;
+use fixlog_analysis::util::{extract_tag_raw, parse_u32_ascii};
 use fixlog_core::QueryExpr;
 use fixlog_core::dict::{ResolvedMessage, chain_field_by_tag, resolve};
 use fixlog_core::format::{LogFormat, sniff};
 use fixlog_core::index::{LogIndex, build_from_bytes_parallel};
-use fixlog_core::parser::parse_one_with_format;
+use fixlog_core::parser::{
+    TAG_MSG_SEQ_NUM, TAG_SENDING_TIME, TAG_TRANSACT_TIME, parse_one_with_format,
+};
 use fixlog_core::query::parse as parse_query;
 
 use crate::io::{head, mmap_file};
@@ -60,6 +63,51 @@ pub enum InputMode {
     Normal,
     Command,
     Search,
+}
+
+/// Criterion used to sort the `visible` list after filtering.
+///
+/// - `Natural` keeps the order messages appear in the file (= the order they
+///   were written to disk). Cheapest path; no parse needed per message.
+/// - `MsgSeqNum` orders by tag 34 numerically. Makes resend-request
+///   duplicates (same 34, different 52) appear contiguous.
+/// - `TransactTime` orders by tag 60 lexicographically over the raw bytes
+///   (safe because the FIX UTC timestamp format is fixed-width ASCII).
+/// - `SendingTime` orders by tag 52 the same way.
+///
+/// Ordering is **stable**: messages that share a key retain their natural
+/// (file) order, so duplicated messages with the same seq still appear in
+/// the sequence the log emitted them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortKey {
+    #[default]
+    Natural,
+    MsgSeqNum,
+    TransactTime,
+    SendingTime,
+}
+
+impl SortKey {
+    /// Return the next sort criterion in the `o` cycle. Used by the TUI
+    /// keybinding so a single key rotates through the four options.
+    pub fn cycle(self) -> Self {
+        match self {
+            SortKey::Natural => SortKey::MsgSeqNum,
+            SortKey::MsgSeqNum => SortKey::TransactTime,
+            SortKey::TransactTime => SortKey::SendingTime,
+            SortKey::SendingTime => SortKey::Natural,
+        }
+    }
+
+    /// Short label rendered in the status bar.
+    pub fn label(self) -> &'static str {
+        match self {
+            SortKey::Natural => "natural",
+            SortKey::MsgSeqNum => "34 MsgSeqNum",
+            SortKey::TransactTime => "60 TransactTime",
+            SortKey::SendingTime => "52 SendingTime",
+        }
+    }
 }
 
 /// Severity of a transient message shown in the status bar.
@@ -349,6 +397,10 @@ pub struct AppState {
     /// `skip_common`. `f`/`x` build an equality/anti-equality filter
     /// expression from the row it points at.
     pub detail_cursor: usize,
+    /// Active sort criterion applied to `visible` after filtering.
+    /// Toggled with `o` in Normal mode; initial value comes from
+    /// `TuiConfig::sort_key` (CLI `--sort=...`).
+    pub sort_key: SortKey,
 }
 
 impl AppState {
@@ -455,6 +507,16 @@ pub fn clamp_cursor(cursor: usize, visible_len: usize) -> usize {
 /// parallel, and compile the optional initial filter. Returns a state with
 /// cursor anchored to the end in `Follow` mode.
 pub fn bootstrap(path: &Path, initial_filter: Option<&str>) -> Result<AppState> {
+    bootstrap_with_sort(path, initial_filter, SortKey::default())
+}
+
+/// Like [`bootstrap`] but with an explicit initial sort criterion. The
+/// plain `bootstrap` defers to this with `SortKey::Natural`.
+pub fn bootstrap_with_sort(
+    path: &Path,
+    initial_filter: Option<&str>,
+    sort_key: SortKey,
+) -> Result<AppState> {
     let mmap = Arc::new(mmap_file(path)?);
     let sample = head(&mmap, 64 * 1024);
     let format = sniff(sample).with_context(|| format!("sniffing {}", path.display()))?;
@@ -504,6 +566,7 @@ pub fn bootstrap(path: &Path, initial_filter: Option<&str>) -> Result<AppState> 
         last_detail_height: 0,
         focus: Focus::List,
         detail_cursor: 0,
+        sort_key,
     };
     recompute_effective_filter(&mut state);
     // Bootstrap anchors to the end of `visible` in Follow mode.
@@ -555,10 +618,90 @@ pub fn apply_filter(state: &mut AppState, expr: Option<QueryExpr>, text: Option<
         &state.format,
         state.filter.as_ref(),
     );
+    sort_visible(
+        &mut state.visible,
+        &state.mmap,
+        &state.index,
+        &state.format,
+        state.sort_key,
+    );
     state.cursor = state.visible.len().saturating_sub(1);
     state.viewport_top = 0;
     state.detail_cache = None;
     state.refresh_detail_cache();
+}
+
+/// Re-sort `visible` in place using `sort_key`. The sort is **stable**:
+/// ties fall back to the ordinal (= natural file order), which is what
+/// users expect when two messages carry the same 34/60 value.
+///
+/// `Natural` is a no-op — it keeps whatever order [`evaluate_visible`]
+/// produced (ascending ordinals, i.e. file order).
+///
+/// Cost: one call to [`extract_tag_raw`] per message in `visible`, bounded
+/// by the per-message tag position. Cached by `sort_by_cached_key` so the
+/// extractor runs once per entry even with many comparisons.
+pub fn sort_visible(
+    visible: &mut [u32],
+    buf: &[u8],
+    index: &LogIndex,
+    format: &LogFormat,
+    sort_key: SortKey,
+) {
+    if visible.len() < 2 {
+        return;
+    }
+    match sort_key {
+        SortKey::Natural => {}
+        SortKey::MsgSeqNum => {
+            visible.sort_by_cached_key(|&ord| (seq_key(buf, index, format, ord), ord));
+        }
+        SortKey::TransactTime => {
+            visible.sort_by_cached_key(|&ord| {
+                (time_key(buf, index, format, ord, TAG_TRANSACT_TIME), ord)
+            });
+        }
+        SortKey::SendingTime => {
+            visible.sort_by_cached_key(|&ord| {
+                (time_key(buf, index, format, ord, TAG_SENDING_TIME), ord)
+            });
+        }
+    }
+}
+
+/// Sort-key helper for tag 34. Returns `(present_first, value)` so
+/// messages with the tag sort before messages missing it. Overflow or a
+/// non-digit value is treated as "missing" — same fate as an absent tag.
+#[inline]
+fn seq_key(buf: &[u8], index: &LogIndex, format: &LogFormat, ord: u32) -> (u8, u32) {
+    let Some(off) = index.messages.get(ord as usize) else {
+        return (1, 0);
+    };
+    let Some(bytes) = buf.get(off.range()) else {
+        return (1, 0);
+    };
+    match extract_tag_raw(bytes, format, TAG_MSG_SEQ_NUM).and_then(parse_u32_ascii) {
+        Some(n) => (0, n),
+        None => (1, 0),
+    }
+}
+
+/// Sort-key helper for timestamp tags (52, 60). The FIX UTC timestamp
+/// format is fixed-width ASCII (`YYYYMMDD-HH:MM:SS[.fff]`), so a
+/// lexicographic byte compare is equivalent to chronological compare —
+/// we avoid the cost of parsing into `SystemTime`.
+#[inline]
+fn time_key(buf: &[u8], index: &LogIndex, format: &LogFormat, ord: u32, tag: u32) -> (u8, Vec<u8>) {
+    let Some(off) = index.messages.get(ord as usize) else {
+        return (1, Vec::new());
+    };
+    let Some(bytes) = buf.get(off.range()) else {
+        return (1, Vec::new());
+    };
+    match extract_tag_raw(bytes, format, tag) {
+        Some(v) => (0, v.to_vec()),
+        None => (1, Vec::new()),
+    }
 }
 
 /// Restore a previous filter snapshot. The compiled expression is carried
@@ -792,5 +935,74 @@ mod tests {
             }
             assert_eq!(fast, slow, "mismatch for expr {expr_text}");
         }
+    }
+
+    /// Build a single FIX 4.4 message with a correct `BodyLength` (9) and
+    /// `CheckSum` (10). Only used by the sort-key test below — inlining
+    /// a fixture that already contains resend-style duplicates in the
+    /// repo just for this test would be overkill.
+    fn synth_msg(seq: u32, sending: &str, transact: &str) -> Vec<u8> {
+        let body = format!("35=D\x0134={seq}\x0149=A\x0156=B\x0152={sending}\x0160={transact}\x01");
+        let head = format!("8=FIX.4.4\x019={}\x01", body.len());
+        let mut out = Vec::with_capacity(head.len() + body.len() + 8);
+        out.extend_from_slice(head.as_bytes());
+        out.extend_from_slice(body.as_bytes());
+        let sum: u32 = out.iter().map(|&b| b as u32).sum();
+        out.extend_from_slice(format!("10={:03}\x01", sum % 256).as_bytes());
+        out
+    }
+
+    /// Synthetic log with three messages whose `SendingTime` (tag 52) is
+    /// strictly increasing but whose `MsgSeqNum` (tag 34) and
+    /// `TransactTime` (tag 60) share a duplicate pair — the shape a
+    /// resend request produces in a real log. Verifies each sort key
+    /// reorders the list as expected and that `Natural` preserves file
+    /// order.
+    #[test]
+    fn sort_visible_respects_sort_key() {
+        use fixlog_core::{build_from_bytes, sniff};
+
+        // Three messages. ord 1 and ord 2 share seq 2 + transact T2 —
+        // the shape a resend produces in the wild.
+        let mut buf = Vec::new();
+        buf.extend(synth_msg(1, "20260420-10:00:01", "20260420-10:00:01"));
+        buf.extend(synth_msg(2, "20260420-10:00:02", "20260420-10:00:02"));
+        buf.extend(synth_msg(2, "20260420-10:00:03", "20260420-10:00:02"));
+
+        let fmt = sniff(&buf).expect("sniff");
+        let index = build_from_bytes(&buf, &fmt);
+        assert_eq!(index.messages.len(), 3, "expected 3 parsed messages");
+        let buf_slice: &[u8] = &buf;
+        let buf = buf_slice;
+
+        // Natural: file order.
+        let mut v: Vec<u32> = (0..3).collect();
+        sort_visible(&mut v, buf, &index, &fmt, SortKey::Natural);
+        assert_eq!(v, vec![0, 1, 2], "natural order");
+
+        // MsgSeqNum: ord 0 first (seq 1), then ord 1, ord 2 both at seq 2
+        // — stable tie-break by ordinal keeps their natural order.
+        let mut v: Vec<u32> = (0..3).collect();
+        sort_visible(&mut v, buf, &index, &fmt, SortKey::MsgSeqNum);
+        assert_eq!(v, vec![0, 1, 2]);
+
+        // Reverse the input so the stable-sort property is observable:
+        // without stability, ord 1 and ord 2 could swap.
+        let mut v: Vec<u32> = vec![2, 1, 0];
+        sort_visible(&mut v, buf, &index, &fmt, SortKey::MsgSeqNum);
+        // Ord 0 (seq 1) wins; ord 1 and ord 2 (both seq 2) fall in
+        // ordinal order thanks to the stable tie-break.
+        assert_eq!(v, vec![0, 1, 2]);
+
+        // TransactTime: duplicates at T2 should sit adjacent; since ord
+        // 1 and ord 2 both carry T2, ord 0 (T1) first.
+        let mut v: Vec<u32> = vec![2, 0, 1];
+        sort_visible(&mut v, buf, &index, &fmt, SortKey::TransactTime);
+        assert_eq!(v, vec![0, 1, 2]);
+
+        // SendingTime: all three are strictly increasing here.
+        let mut v: Vec<u32> = vec![2, 1, 0];
+        sort_visible(&mut v, buf, &index, &fmt, SortKey::SendingTime);
+        assert_eq!(v, vec![0, 1, 2]);
     }
 }

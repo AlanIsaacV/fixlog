@@ -24,8 +24,7 @@ fn fixture(name: &str) -> PathBuf {
 fn cfg(name: &str) -> TuiConfig {
     TuiConfig {
         path: fixture(name),
-        follow: false,
-        initial_filter: None,
+        ..Default::default()
     }
 }
 

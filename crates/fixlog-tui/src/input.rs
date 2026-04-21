@@ -114,6 +114,10 @@ pub enum Action {
     FilterFromDetail {
         negated: bool,
     },
+    /// `o` in Normal mode — cycle the sort criterion applied to the
+    /// visible list. Rotates natural → 34 → 60 → 52 → natural. Preserves
+    /// the message currently under the cursor when possible.
+    CycleSortKey,
 }
 
 pub fn map_event(ev: &Event, mode: InputMode) -> Action {
@@ -197,6 +201,7 @@ pub fn map_normal_key(k: &KeyEvent) -> Action {
         (KeyCode::BackTab, _) => Action::FocusPrev,
         (KeyCode::Char('f'), KeyModifiers::NONE) => Action::FilterFromDetail { negated: false },
         (KeyCode::Char('x'), KeyModifiers::NONE) => Action::FilterFromDetail { negated: true },
+        (KeyCode::Char('o'), KeyModifiers::NONE) => Action::CycleSortKey,
         (KeyCode::Esc, _) => Action::OverlayClose,
         (KeyCode::Enter, _) => Action::OverlayApply,
         // Letter is only meaningful after m / ' prefix; let the app layer

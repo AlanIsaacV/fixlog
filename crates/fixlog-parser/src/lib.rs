@@ -29,6 +29,8 @@ pub const TAG_SENDER_COMP_ID: u32 = 49;
 pub const TAG_SENDING_TIME: u32 = 52;
 /// Tag `56` — TargetCompID.
 pub const TAG_TARGET_COMP_ID: u32 = 56;
+/// Tag `60` — TransactTime.
+pub const TAG_TRANSACT_TIME: u32 = 60;
 
 /// A single FIX message, still unresolved against any dictionary.
 ///

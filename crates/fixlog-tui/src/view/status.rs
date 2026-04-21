@@ -13,7 +13,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::state::{AppState, Focus, StatusLevel, ViewMode};
+use crate::state::{AppState, Focus, SortKey, StatusLevel, ViewMode};
 
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     if area.height == 0 {
@@ -93,6 +93,12 @@ fn left_text(state: &AppState) -> Line<'static> {
     }
     if state.hide_heartbeat {
         spans.push(Span::styled("[no hb] ", Style::default().fg(Color::Yellow)));
+    }
+    if state.sort_key != SortKey::Natural {
+        spans.push(Span::styled(
+            format!("[sort:{}] ", state.sort_key.label()),
+            Style::default().fg(Color::Magenta),
+        ));
     }
     spans.push(Span::styled(
         "sep:",

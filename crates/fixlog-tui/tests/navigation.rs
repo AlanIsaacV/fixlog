@@ -18,8 +18,7 @@ fn cfg() -> TuiConfig {
             env!("CARGO_MANIFEST_DIR"),
             "/../../fixtures/real/fix44-om.log"
         )),
-        follow: false,
-        initial_filter: None,
+        ..Default::default()
     }
 }
 

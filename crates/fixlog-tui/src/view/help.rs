@@ -118,6 +118,10 @@ fn lines() -> Vec<Line<'static>> {
         ),
         entry("H", "hide / show Heartbeat messages (composes NOT 35=0)"),
         entry("r", "raw FIX bytes ↔ resolved field table in detail panel"),
+        entry(
+            "o",
+            "cycle sort order: natural → 34 MsgSeqNum → 60 TransactTime → 52 SendingTime",
+        ),
         blank(),
         header("ANALYSIS OVERLAYS"),
         entry(
