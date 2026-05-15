@@ -1,6 +1,7 @@
 pub mod grep;
 pub mod histogram;
 pub mod orders;
+pub mod orders_consolidate;
 pub mod parse;
 pub mod sessions;
 pub mod sniff;

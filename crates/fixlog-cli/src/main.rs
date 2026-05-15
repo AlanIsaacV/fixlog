@@ -1,10 +1,12 @@
 use std::path::PathBuf;
 
-use anyhow::Result;
-use clap::{Parser, Subcommand, ValueEnum};
+use anyhow::{Result, anyhow};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 mod commands;
 mod io;
+
+use crate::io::InputSource;
 
 /// `fixlog` — inspect FIX log files.
 #[derive(Parser)]
@@ -98,23 +100,18 @@ enum Command {
         #[arg(long, value_enum, default_value_t = ParseFormat::Pretty)]
         format: ParseFormat,
     },
-    /// Reconstruct order lifecycles by ClOrdID.
+    /// Reconstruct order lifecycles by ClOrdID, or produce a consolidated
+    /// summary across one or more log files.
     ///
-    /// Without `--id`: list the N ClOrdIDs with the most events.
-    /// With `--id`: print the full timeline + Gantt row.
-    Orders {
-        /// Path to the log file.
-        file: PathBuf,
-        /// ClOrdID (tag 11) to reconstruct. If omitted, list top-N by event count.
-        #[arg(long)]
-        id: Option<String>,
-        /// Number of ClOrdIDs to list when `--id` is absent.
-        #[arg(long, default_value_t = 20)]
-        limit: usize,
-        /// Output format.
-        #[arg(long, value_enum, default_value_t = ParseFormat::Pretty)]
-        format: ParseFormat,
-    },
+    /// Default (no sub-command): timeline mode.
+    /// - `fixlog orders FILE`            list top-N ClOrdIDs by event count
+    /// - `fixlog orders FILE --id ABC`   full timeline + Gantt for one order
+    ///
+    /// Sub-commands:
+    /// - `fixlog orders consolidate FILE [FILE ...]` — consolidated summary
+    ///   (root_clordid, cum_qty, notional, fills, last status). Accepts
+    ///   plain logs and `.gz` rotated archives; `-` reads from stdin.
+    Orders(OrdersArgs),
     /// Temporal histogram of SendingTime (tag 52).
     ///
     /// Examples:
@@ -135,10 +132,65 @@ enum Command {
     },
 }
 
+#[derive(Args)]
+#[command(args_conflicts_with_subcommands = true)]
+struct OrdersArgs {
+    #[command(subcommand)]
+    sub: Option<OrdersSub>,
+
+    /// Path to the log file (timeline mode).
+    file: Option<PathBuf>,
+    /// ClOrdID (tag 11) to reconstruct. If omitted, list top-N by event count.
+    #[arg(long)]
+    id: Option<String>,
+    /// Number of ClOrdIDs to list when `--id` is absent.
+    #[arg(long, default_value_t = 20)]
+    limit: usize,
+    /// Output format for timeline mode.
+    #[arg(long, value_enum, default_value_t = ParseFormat::Pretty)]
+    format: ParseFormat,
+}
+
+#[derive(Subcommand)]
+enum OrdersSub {
+    /// Aggregate fills per order across one or more log files.
+    ///
+    /// Inputs are streamed in order; `.gz` archives are decompressed
+    /// transparently and `-` reads from stdin. Fills are deduplicated by
+    /// ExecID so resends and overlap between current and rotated logs
+    /// don't double-count notional.
+    Consolidate {
+        /// One or more paths. `.gz` archives are decompressed. `-` reads stdin.
+        #[arg(required = true)]
+        inputs: Vec<String>,
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = ConsolidatedFormat::Pretty)]
+        format: ConsolidatedFormat,
+        /// Sort criterion.
+        #[arg(long, value_enum, default_value_t = ConsolidateSort::Notional)]
+        sort: ConsolidateSort,
+    },
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 enum ParseFormat {
     Pretty,
     Json,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum ConsolidatedFormat {
+    Pretty,
+    Csv,
+    Json,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum ConsolidateSort {
+    Notional,
+    CumQty,
+    Fills,
+    Recent,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -198,12 +250,23 @@ fn main() -> Result<()> {
             sort,
         } => commands::tui::run(file.as_deref(), filter, follow, sort.into()),
         Command::Sessions { file, format } => commands::sessions::run(&file, format),
-        Command::Orders {
-            file,
-            id,
-            limit,
-            format,
-        } => commands::orders::run(&file, id.as_deref(), limit, format),
+        Command::Orders(args) => match args.sub {
+            Some(OrdersSub::Consolidate {
+                inputs,
+                format,
+                sort,
+            }) => {
+                let sources: Vec<InputSource> =
+                    inputs.iter().map(|s| InputSource::from_arg(s)).collect();
+                commands::orders_consolidate::run(&sources, format, sort)
+            }
+            None => {
+                let file = args
+                    .file
+                    .ok_or_else(|| anyhow!("missing FILE argument (or use `consolidate`)"))?;
+                commands::orders::run(&file, args.id.as_deref(), args.limit, args.format)
+            }
+        },
         Command::Histogram {
             file,
             bucket,
