@@ -19,7 +19,7 @@ Library-only; the `fixlog tui` CLI subcommand is a thin wrapper over
 - `src/theme.rs` — `color_for_msg_type` default map.
 - `src/io.rs` — `mmap_file` / `head` (duplicated from `fixlog-cli/src/io.rs`).
 - `src/view/{list,detail,status,command,search}.rs` — main per-region renderers.
-- `src/view/{sessions,orders,diff,marks,histogram}.rs` — overlay renderers (Fase 4). Each paints a centered `Clear` + bordered widget over the main layout.
+- `src/view/{sessions,orders,diff,marks,histogram,consolidated}.rs` — overlay renderers (Fase 4 + consolidated 2026-05-15). Each paints a centered `Clear` + bordered widget over the main layout.
 - `src/export.rs` — `:export <fmt> <path>` writers (csv/json/fix/pretty).
 - `src/summary.rs` — `MessageSummary` + `summarize(RawMessage, DictChain)` driving the list-column layout (Fase B). Hosts the per-MsgType table and the shared `lookup_tag` / `lookup_tag_string` / `format_qty` helpers.
 - `tests/{bootstrap,navigation,command,search,yank,display_toggles,horizontal_scroll,focus}.rs` — integration tests driving `App` with synthesised key events.
@@ -28,9 +28,10 @@ Library-only; the `fixlog tui` CLI subcommand is a thin wrapper over
 ## Fase 4 additions — overlays, bookmarks, diff, export
 
 `AppState.overlay: Option<Overlay>` (`Sessions`, `Orders`, `Diff`, `Marks`,
-`Histogram`) — at most one at a time. When an overlay is open, `j`/`k`/
-`Enter`/`Esc` are intercepted by `App::overlay_intercept` and routed to
-overlay-local cursors; other keys (`q`, `:`, `F`, etc.) still work.
+`Histogram`, `Consolidated`, `Help`) — at most one at a time. When an
+overlay is open, `j`/`k`/`Enter`/`Esc` are intercepted by
+`App::overlay_intercept` and routed to overlay-local cursors; other keys
+(`q`, `:`, `F`, etc.) still work.
 
 Two-key sequences extend the `yy`/`yY` pattern:
 
@@ -51,6 +52,7 @@ Commands added in Fase 4:
 |---------------------|------------------------------------------------------------|
 | `:sessions`         | Build `SessionMap` on-demand, open overlay                 |
 | `:orders [id]`      | Build `OrderTimeline` for `id` or cursor's tag 11, overlay |
+| `:consolidated`     | Stream `ConsolidatedBuilder` over `state.mmap`, open per-order summary overlay; `:consolidate` alias |
 | `:marks`            | Open bookmarks table                                       |
 | `:histogram [dur]`  | Build histogram at `dur` bucket (default `1s`), overlay    |
 | `:export <fmt> <path>` | Dump `state.visible` to disk (`csv`/`json`/`fix`/`pretty`) |
@@ -131,6 +133,124 @@ Normal mode, 1 row in Command or Search. The row is shared; only one of
   falls through: the prefix is cleared and the action runs normally (raw
   mode toggles). This is the same fall-through used for any bound letter;
   currently only `r` removes a bookmark letter. The other 25 still work.
+
+## Consolidated overlay (2026-05-15)
+
+`:consolidated` (alias `:consolidate`) streams the current `state.mmap`
+through `fixlog_analysis::orders_consolidated::ConsolidatedBuilder` and
+opens an `Overlay::Consolidated { view: Arc<ConsolidatedView>, cursor,
+viewport_top }`. The raw `Vec<OrderConsolidated>` returned by
+`builder.finish()` is consumed by `ConsolidatedView::from_rows` once at
+open time and turned into render-ready `Vec<ConsolidatedDisplayRow>` +
+a precomputed `summary: String`. Each display row carries
+`Cow<'static, str>` cells so static placeholders (`"-"`), `side_label`
+constants, and dictionary hits don't pay a `String` allocation; only
+`fmt_int` / `fmt_money` / `fmt_price` / `lossy` output is owned. The
+`Arc` keeps the per-frame `app.state.overlay.clone()` in the draw loop
+a refcount bump instead of a deep copy of every order row.
+
+`command::open_consolidated_overlay`:
+
+```rust
+let bytes: &[u8] = &state.mmap;
+let mut builder = ConsolidatedBuilder::new();
+builder.push_source(std::io::Cursor::new(bytes), &state.format)?;
+let rows = builder.finish();
+let view = Arc::new(ConsolidatedView::from_rows(rows));
+state.open_overlay(Overlay::Consolidated {
+    view, cursor: 0, viewport_top: 0,
+});
+```
+
+`view::consolidated::render` takes `&mut AppState` (not just the
+overlay payload) so it can re-clamp `viewport_top` against the live
+body height on every frame via `clamp_viewport_top`, mirroring the
+sticky `AppState::ensure_cursor_visible` behaviour of the main list.
+**Render is virtualised**: only `view.rows[viewport_top..viewport_top+h]`
+is turned into `Row<'_>`, never the full slice. On 100k-order logs
+that's the difference between ~50 row allocations per frame and 100k,
+which is what made mouse-wheel scroll feel sticky before the fix.
+`ratatui::TableState::select` uses the index relative to the visible
+slice (`cursor - viewport_top`).
+
+Layout: `ClOrdID | Side | Symbol | OrderQty | CumQty | Notional |
+AvgPx | Status | Fills`. Row color is driven by `status_color`
+(precomputed in `from_rows` from `final_ord_status`: Filled green,
+PartFilled yellow, Cancelled/Rejected red, Expired dark gray,
+New/PendingNew blue, Replaced/PendingReplace cyan). The summary
+header (`orders / fills / notional`) is precomputed in
+`ConsolidatedView::summary` — never recomputed per frame.
+
+Nav (via `overlay_intercept`):
+
+- `j`/`k`, `Ctrl+D`/`Ctrl+U`, `g`/`G` — move the row cursor (standard
+  10-row STEP for half-page; clamped to `view.rows.len() - 1`). The
+  render path handles the viewport scroll; handlers never touch
+  `viewport_top` directly.
+- `Enter` — calls `App::drill_into_consolidated_selection`, which reads
+  the cursor row's `root_clordid` and invokes
+  `command::open_orders_overlay(state, Some(&clordid))`. The previous
+  `Overlay::Consolidated` is parked in `state.previous_overlay` (see
+  "Overlay stack" below) so `Esc` on the Orders timeline returns to
+  the consolidated list rather than closing all the way back to the
+  main message view.
+- `Esc` — `esc_overlay()` (pops the parked parent if any; otherwise
+  closes).
+
+### INVARIANTs specific to this overlay
+
+- **Blocking build, no caching.** The builder runs on the foreground
+  thread. The first frame after open used to pile the build cost
+  together with O(n) render + clone-per-frame; with the perf pass
+  the render is O(viewport) and the overlay clone is an `Arc` bump,
+  so the user-perceived "open" cost is now bounded by the builder
+  itself. Caching + invalidation on `--follow` append is still
+  deferred (see "Known gaps" in `state.md`).
+- **Builder semantics match the CLI.** `:consolidated` uses the same
+  `ConsolidatedBuilder` as `fixlog orders consolidate`, including the
+  placeholder-anchor guard for `41=NONE` and ExecID-based dedup. See
+  `crates/analysis.md` §"Consolidated orders" for the algorithm.
+- **No mmap pin during drill-down.** The `Arc<ConsolidatedView>` carried
+  by the parent overlay (now parked in `previous_overlay`) contains
+  only owned data (`Vec<u8>` for `root_clordid`, `Cow<'static, str>`
+  for cells) — nothing borrows the mmap, so a follow-mode mmap swap
+  during the drill cannot dangle.
+
+## Overlay stack (drill-back)
+
+`AppState.previous_overlay: Option<Overlay>` is a one-slot stack used
+by drill-down flows. Today only the Consolidated→Orders drill uses
+it, but the helpers in `AppState` are generic:
+
+- `open_overlay(new)` — clears `previous_overlay`, sets `overlay`.
+  All user-initiated overlay commands (`:sessions`, `:histogram`,
+  `:consolidate`, `:marks`, `:help`, `O`, the diff trigger) go
+  through this so a stale parent never resurfaces on the next `Esc`.
+- `esc_overlay()` — pops the parked parent if any; otherwise closes.
+  Bound to `Action::OverlayClose`.
+- `close_overlay()` — force-clears both slots. Used by `Enter`-style
+  flows that commit a result (jump-to-cursor, apply-filter) and are
+  done with any breadcrumb.
+
+`App::drill_into_consolidated_selection` is the push site: it clones
+the parent (cheap — `Arc` payload), calls `open_orders_overlay`
+(which goes through `open_overlay` and therefore clears
+`previous_overlay`), and only re-parks the parent if the drill
+actually produced an `Overlay::Orders`. So if the user opens
+`:orders ABC` directly from the main list, `Esc` closes normally
+(no parent to restore).
+
+## Orders overlay (event table)
+
+Per-fill columns are grouped next to the cumulative ones so the
+distinction reads naturally ("this fill" → "running total"):
+`time | type | exec | status | LastQty | LastPx | CumQty | AvgPx`.
+The `LastQty` (tag 32) and `AvgPx` (tag 6) columns were added in
+the 2026-05-15 perf pass alongside the consolidated overlay
+rewrite; `OrderEvent` carries the raw bytes from the wire so the
+overlay renders them verbatim via `fmt_bytes_or_dash` (no numeric
+parse). See `crates/analysis.md` §"Orders" for the underlying
+`OrderEvent` fields.
 
 ## Summarizers (Fase B)
 
@@ -310,6 +430,7 @@ cursor.
 | `←` / `Left`   | Scroll the **focused** panel left by 8 columns           |
 | `0`            | Reset all three scroll offsets (list h, detail h, detail v) |
 | `O`            | Open order lifecycle overlay (tag 11 of message under cursor) |
+| `?`            | Open `:help` overlay directly                              |
 | `dd`           | Set diff slot A to current ordinal                        |
 | `dD`           | Set diff slot B and open diff overlay                     |
 | `m<letter>`    | Set bookmark (a–z / A–Z) to current ordinal               |
@@ -374,6 +495,7 @@ Any cursor motion other than `G` drops the view out of `Follow` into
 :filter                 → clear filter
 :sessions               → open Sessions overlay (SessionMap::build on-demand)
 :orders [id]            → open Orders overlay; sin id extrae tag 11 del cursor
+:consolidated           → corre ConsolidatedBuilder sobre state.mmap, abre Overlay::Consolidated
 :histogram [bucket]     → open Histogram overlay; bucket default 1s (Ns/Nms/Nus/Nm)
 :marks                  → open Marks overlay
 :export <fmt> <path>    → export state.visible (csv / json / fix / pretty)
