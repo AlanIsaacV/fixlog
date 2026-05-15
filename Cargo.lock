@@ -481,6 +481,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "fixlog-core",
+ "memchr",
  "rayon",
  "smallvec",
  "thiserror",
@@ -496,6 +497,7 @@ dependencies = [
  "fixlog-analysis",
  "fixlog-core",
  "fixlog-tui",
+ "flate2",
  "libc",
  "memmap2",
  "notify",
@@ -587,6 +589,7 @@ dependencies = [
  "fixlog-core",
  "memmap2",
  "ratatui",
+ "tempfile",
  "thiserror",
  "tracing",
 ]

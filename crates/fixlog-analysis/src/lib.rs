@@ -13,6 +13,7 @@
 
 pub mod histogram;
 pub mod orders;
+pub mod orders_consolidated;
 pub mod sessions;
 pub mod util;
 
@@ -28,4 +29,8 @@ pub enum AnalysisError {
     /// A required tag was missing from the message at `ordinal`.
     #[error("missing tag {tag} at ordinal {ordinal}")]
     MissingTag { tag: u32, ordinal: u32 },
+
+    /// I/O error reading a streaming source (file, gz decoder, stdin).
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
 }
