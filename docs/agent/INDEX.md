@@ -22,6 +22,7 @@ LLM-facing documentation for `fixlog`. Each file below is self-contained and can
 | Touch TUI internals (layout, keybindings, event loop, follow watcher) | `crates/tui.md`, `crates/index.md` (for append/consumed), `crates/query.md` (for filter/search) |
 | Add a new key binding or input mode | `crates/tui.md` §Input modes / §Keybindings |
 | Session tracking / order lifecycle / histogram analysis | `crates/analysis.md`, `crates/index.md` (for secondary lookup) |
+| Consolidated order summary, multi-input streaming, `.gz` ingestion | `crates/analysis.md` §"Consolidated orders", `crates/cli.md` §"`orders consolidate`", `crates/tui.md` §"Consolidated overlay" |
 | Hot-tag pre-filter / AST pushdown | `crates/query.md` §hot_equalities, `crates/index.md` §SecondaryIndex |
 | Work with test fixtures (add new, debug expected counts) | `reference/fixtures.md` |
 | Cross-crate change, API boundary, lifetime issue | `patterns.md`, plus the relevant `crates/*.md` |
