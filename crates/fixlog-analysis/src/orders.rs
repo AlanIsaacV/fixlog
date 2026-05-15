@@ -32,17 +32,25 @@ use smallvec::SmallVec;
 
 use crate::util::{find_tag, parse_sending_time};
 
+/// Tag `6` — AvgPx. Volume-weighted average price across all fills for
+/// this order so far. Reported on each ExecutionReport.
+pub const TAG_AVG_PX: u32 = 6;
 /// Tag `14` — CumQty.
 pub const TAG_CUM_QTY: u32 = 14;
 /// Tag `31` — LastPx. Execution price of the last fill in the current
 /// ExecutionReport. Absent on pending/new/cancel events.
 pub const TAG_LAST_PX: u32 = 31;
+/// Tag `32` — LastQty. Quantity of the last fill in the current
+/// ExecutionReport. Absent on pending/new/cancel events.
+pub const TAG_LAST_QTY: u32 = 32;
 /// Tag `39` — OrdStatus.
 pub const TAG_ORD_STATUS: u32 = 39;
 /// Tag `150` — ExecType.
 pub const TAG_EXEC_TYPE: u32 = 150;
 
-/// One event (message) in the lifetime of an order.
+/// One event (message) in the lifetime of an order. The `last_*` fields
+/// are per-fill (this ExecutionReport only); `cum_qty` and `avg_px` are
+/// cumulative across the order's fills.
 #[derive(Clone, Debug)]
 pub struct OrderEvent {
     pub ordinal: u32,
@@ -50,8 +58,10 @@ pub struct OrderEvent {
     pub sending_time: Option<SystemTime>,
     pub exec_type: Option<SmallVec<[u8; 2]>>,
     pub ord_status: Option<SmallVec<[u8; 2]>>,
-    pub cum_qty: Option<SmallVec<[u8; 16]>>,
+    pub last_qty: Option<SmallVec<[u8; 16]>>,
     pub last_px: Option<SmallVec<[u8; 16]>>,
+    pub cum_qty: Option<SmallVec<[u8; 16]>>,
+    pub avg_px: Option<SmallVec<[u8; 16]>>,
 }
 
 /// Full ordered timeline for a single ClOrdID chain.
@@ -143,8 +153,10 @@ impl OrderTimeline {
             let sending_time = find_tag(&msg, TAG_SENDING_TIME).and_then(parse_sending_time);
             let exec_type = find_tag(&msg, TAG_EXEC_TYPE).map(SmallVec::from_slice);
             let ord_status = find_tag(&msg, TAG_ORD_STATUS).map(SmallVec::from_slice);
-            let cum_qty = find_tag(&msg, TAG_CUM_QTY).map(SmallVec::from_slice);
+            let last_qty = find_tag(&msg, TAG_LAST_QTY).map(SmallVec::from_slice);
             let last_px = find_tag(&msg, TAG_LAST_PX).map(SmallVec::from_slice);
+            let cum_qty = find_tag(&msg, TAG_CUM_QTY).map(SmallVec::from_slice);
+            let avg_px = find_tag(&msg, TAG_AVG_PX).map(SmallVec::from_slice);
 
             events.push(OrderEvent {
                 ordinal: ord,
@@ -152,8 +164,10 @@ impl OrderTimeline {
                 sending_time,
                 exec_type,
                 ord_status,
-                cum_qty,
+                last_qty,
                 last_px,
+                cum_qty,
+                avg_px,
             });
         }
 
