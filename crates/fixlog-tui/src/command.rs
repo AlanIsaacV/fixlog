@@ -6,15 +6,18 @@
 //! parse here.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use fixlog_analysis::histogram::Histogram;
 use fixlog_analysis::orders::OrderTimeline;
+use fixlog_analysis::orders_consolidated::ConsolidatedBuilder;
 use fixlog_analysis::sessions::SessionMap;
 use fixlog_core::query::parse as parse_query;
 
 use crate::export::{self, ExportFormat};
 use crate::state::{AppState, Overlay, StatusMessage, recompute_effective_filter};
+use crate::view::consolidated::ConsolidatedView;
 
 /// Result of executing a command. `Quit` signals the event loop to shut
 /// down; `Continue` means keep running (possibly after mutating state).
@@ -34,6 +37,7 @@ pub enum Command {
     ClearFilter,
     Sessions,
     Orders(Option<String>),
+    Consolidated,
     Marks,
     Histogram(Duration),
     Export { fmt: ExportFormat, path: PathBuf },
@@ -69,6 +73,7 @@ pub fn parse(input: &str) -> Command {
             };
             Command::Orders(id)
         }
+        "consolidated" | "consolidate" => Command::Consolidated,
         "marks" => Command::Marks,
         "histogram" => {
             let bucket = if rest.is_empty() {
@@ -138,7 +143,7 @@ pub(crate) fn open_orders_overlay(state: &mut AppState, id: Option<&str>) {
     match OrderTimeline::build(&state.index, &state.mmap, &state.format, &clordid) {
         Some(tl) => {
             let n = tl.events.len();
-            state.overlay = Some(Overlay::Orders {
+            state.open_overlay(Overlay::Orders {
                 timeline: tl,
                 cursor: 0,
             });
@@ -149,6 +154,35 @@ pub(crate) fn open_orders_overlay(state: &mut AppState, id: Option<&str>) {
                 "no events found for ClOrdID={}",
                 String::from_utf8_lossy(&clordid)
             ));
+        }
+    }
+}
+
+/// `:consolidated` — stream the current mmap through
+/// [`ConsolidatedBuilder`] and open an overlay with one row per order
+/// family. Bounded by mmap size; for very large logs this may stall the
+/// UI for a second or two (no caching yet — fase 5).
+pub(crate) fn open_consolidated_overlay(state: &mut AppState) {
+    let bytes: &[u8] = &state.mmap;
+    let mut builder = ConsolidatedBuilder::new();
+    match builder.push_source(std::io::Cursor::new(bytes), &state.format) {
+        Ok(_stats) => {
+            let rows = builder.finish();
+            if rows.is_empty() {
+                state.status = StatusMessage::warn("no orders found in current log");
+                return;
+            }
+            let view = Arc::new(ConsolidatedView::from_rows(rows));
+            let n = view.rows.len();
+            state.open_overlay(Overlay::Consolidated {
+                view,
+                cursor: 0,
+                viewport_top: 0,
+            });
+            state.status = StatusMessage::info(format!("consolidated: {n} orders"));
+        }
+        Err(e) => {
+            state.status = StatusMessage::error(format!("consolidate failed: {e}"));
         }
     }
 }
@@ -182,7 +216,7 @@ pub fn execute(state: &mut AppState, cmd: Command) -> Outcome {
     match cmd {
         Command::Quit => Outcome::Quit,
         Command::Help => {
-            state.overlay = Some(Overlay::Help { scroll: 0 });
+            state.open_overlay(Overlay::Help { scroll: 0 });
             Outcome::Continue
         }
         Command::SetFilter(expr) => match parse_query(&expr) {
@@ -207,7 +241,7 @@ pub fn execute(state: &mut AppState, cmd: Command) -> Outcome {
         Command::Sessions => {
             let map = SessionMap::build(&state.index, &state.mmap, &state.format);
             let count = map.by_key.len();
-            state.overlay = Some(Overlay::Sessions { map, cursor: 0 });
+            state.open_overlay(Overlay::Sessions { map, cursor: 0 });
             state.status = StatusMessage::info(format!("sessions: {count}"));
             Outcome::Continue
         }
@@ -215,14 +249,18 @@ pub fn execute(state: &mut AppState, cmd: Command) -> Outcome {
             open_orders_overlay(state, id.as_deref());
             Outcome::Continue
         }
+        Command::Consolidated => {
+            open_consolidated_overlay(state);
+            Outcome::Continue
+        }
         Command::Marks => {
-            state.overlay = Some(Overlay::Marks { cursor: 0 });
+            state.open_overlay(Overlay::Marks { cursor: 0 });
             Outcome::Continue
         }
         Command::Histogram(bucket) => {
             let h = Histogram::build(&state.index, &state.mmap, &state.format, bucket);
             let total = h.total();
-            state.overlay = Some(Overlay::Histogram {
+            state.open_overlay(Overlay::Histogram {
                 histogram: h,
                 width: 80,
             });
@@ -243,7 +281,7 @@ pub fn execute(state: &mut AppState, cmd: Command) -> Outcome {
         }
         Command::DiffClear => {
             state.diff_slots = [None, None];
-            state.overlay = None;
+            state.close_overlay();
             state.status = StatusMessage::info("diff slots cleared");
             Outcome::Continue
         }
@@ -326,5 +364,106 @@ mod tests {
     fn parse_unknown() {
         assert_eq!(parse("wat"), Command::Unknown("wat".into()));
         assert_eq!(parse(""), Command::Unknown(String::new()));
+    }
+
+    #[test]
+    fn parse_consolidated_aliases() {
+        assert_eq!(parse("consolidated"), Command::Consolidated);
+        assert_eq!(parse("consolidate"), Command::Consolidated);
+    }
+
+    /// Build a FIX message with a correct BodyLength + CheckSum.
+    fn build_msg(body_fields: &str) -> Vec<u8> {
+        let body_len = body_fields.len();
+        let head = format!("8=FIX.4.4\x019={body_len}\x01");
+        let payload: Vec<u8> = head.bytes().chain(body_fields.bytes()).collect();
+        let sum: u8 = payload.iter().fold(0u8, |a, b| a.wrapping_add(*b));
+        let trailer = format!("10={sum:03}\x01");
+        payload.into_iter().chain(trailer.bytes()).collect()
+    }
+
+    fn synthetic_log_two_orders() -> Vec<u8> {
+        let tail = "49=A\x0156=B\x01";
+        let t = |sec| format!("52=20260417-12:34:{sec:02}\x01");
+        let mut out = Vec::new();
+        // Order ABC: D + fill 60@10.5
+        out.extend(build_msg(&format!(
+            "35=D\x0134=1\x01{tail}{}11=ABC\x0155=AAPL\x0154=1\x0138=100\x01",
+            t(1)
+        )));
+        out.extend(build_msg(&format!(
+            "35=8\x0134=2\x01{tail}{}11=ABC\x0137=ord1\x0117=E1\x01150=F\x0139=1\x0114=60\x0131=10.5\x0132=60\x01",
+            t(2)
+        )));
+        // Order DEF: D + fill 50@100
+        out.extend(build_msg(&format!(
+            "35=D\x0134=3\x01{tail}{}11=DEF\x0155=MSFT\x0154=2\x0138=50\x01",
+            t(3)
+        )));
+        out.extend(build_msg(&format!(
+            "35=8\x0134=4\x01{tail}{}11=DEF\x0137=ord2\x0117=E2\x01150=F\x0139=2\x0114=50\x0131=100\x0132=50\x01",
+            t(4)
+        )));
+        out
+    }
+
+    #[test]
+    fn open_consolidated_opens_overlay_with_rows() {
+        use crate::state::{Overlay, bootstrap_with_sort};
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("log.txt");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(&synthetic_log_two_orders())
+            .unwrap();
+
+        let mut state = bootstrap_with_sort(&path, None, crate::state::SortKey::Natural).unwrap();
+        open_consolidated_overlay(&mut state);
+
+        let Some(Overlay::Consolidated { view, cursor, .. }) = state.overlay.as_ref() else {
+            panic!("expected Consolidated overlay, got {:?}", state.overlay);
+        };
+        assert_eq!(view.rows.len(), 2, "two orders in the log");
+        assert_eq!(*cursor, 0);
+
+        // Highest-notional first (DEF: 5000 vs ABC: 630).
+        assert_eq!(view.rows[0].root_clordid, b"DEF");
+        assert_eq!(view.rows[1].root_clordid, b"ABC");
+    }
+
+    #[test]
+    fn drill_into_consolidated_opens_orders_overlay() {
+        use crate::state::{Overlay, bootstrap_with_sort};
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("log.txt");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(&synthetic_log_two_orders())
+            .unwrap();
+        let mut state = bootstrap_with_sort(&path, None, crate::state::SortKey::Natural).unwrap();
+        open_consolidated_overlay(&mut state);
+
+        // Simulate Enter: take the cursor row, open `:orders <id>`. This
+        // matches what `App::drill_into_consolidated_selection` does.
+        let clordid = match state.overlay.as_ref() {
+            Some(Overlay::Consolidated { view, cursor, .. }) => {
+                view.rows[*cursor].root_clordid.clone()
+            }
+            _ => panic!("consolidated overlay missing"),
+        };
+        let id = String::from_utf8(clordid).unwrap();
+        open_orders_overlay(&mut state, Some(&id));
+
+        match state.overlay.as_ref() {
+            Some(Overlay::Orders { timeline, .. }) => {
+                assert_eq!(timeline.clordid, b"DEF");
+                assert!(timeline.events.len() >= 2, "D + fill at minimum");
+            }
+            other => panic!("expected Orders overlay after drill-down, got {other:?}"),
+        }
     }
 }

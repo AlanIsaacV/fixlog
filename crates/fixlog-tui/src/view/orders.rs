@@ -48,8 +48,13 @@ pub fn render(frame: &mut Frame, area: Rect, timeline: &OrderTimeline, cursor: u
         chunks[0],
     );
 
-    let header = Row::new(vec!["time", "type", "exec", "status", "cum-qty", "last-px"])
-        .style(Style::default().add_modifier(Modifier::BOLD));
+    // Header order groups per-fill values (LastQty/LastPx) next to the
+    // cumulative ones (CumQty/AvgPx) so the distinction reads naturally:
+    // "this fill" → "running total".
+    let header = Row::new(vec![
+        "time", "type", "exec", "status", "LastQty", "LastPx", "CumQty", "AvgPx",
+    ])
+    .style(Style::default().add_modifier(Modifier::BOLD));
     let rows: Vec<Row<'static>> = timeline
         .events
         .iter()
@@ -60,30 +65,12 @@ pub fn render(frame: &mut Frame, area: Rect, timeline: &OrderTimeline, cursor: u
             Row::new(vec![
                 Cell::from(format_time(e.sending_time)),
                 Cell::from(String::from_utf8_lossy(&e.msg_type).into_owned()),
-                Cell::from(
-                    e.exec_type
-                        .as_ref()
-                        .map(|v| String::from_utf8_lossy(v).into_owned())
-                        .unwrap_or_else(|| "-".into()),
-                ),
-                Cell::from(
-                    e.ord_status
-                        .as_ref()
-                        .map(|v| String::from_utf8_lossy(v).into_owned())
-                        .unwrap_or_else(|| "-".into()),
-                ),
-                Cell::from(
-                    e.cum_qty
-                        .as_ref()
-                        .map(|v| String::from_utf8_lossy(v).into_owned())
-                        .unwrap_or_else(|| "-".into()),
-                ),
-                Cell::from(
-                    e.last_px
-                        .as_ref()
-                        .map(|v| String::from_utf8_lossy(v).into_owned())
-                        .unwrap_or_else(|| "-".into()),
-                ),
+                Cell::from(fmt_bytes_or_dash(e.exec_type.as_deref())),
+                Cell::from(fmt_bytes_or_dash(e.ord_status.as_deref())),
+                Cell::from(fmt_bytes_or_dash(e.last_qty.as_deref())),
+                Cell::from(fmt_bytes_or_dash(e.last_px.as_deref())),
+                Cell::from(fmt_bytes_or_dash(e.cum_qty.as_deref())),
+                Cell::from(fmt_bytes_or_dash(e.avg_px.as_deref())),
             ])
             .style(style)
         })
@@ -91,11 +78,13 @@ pub fn render(frame: &mut Frame, area: Rect, timeline: &OrderTimeline, cursor: u
 
     let widths = [
         Constraint::Length(19), // "YYYY-MM-DD HH:MM:SS"
-        Constraint::Length(6),
-        Constraint::Length(6),
-        Constraint::Length(8),
-        Constraint::Length(10),
-        Constraint::Length(12),
+        Constraint::Length(6),  // type
+        Constraint::Length(6),  // exec
+        Constraint::Length(8),  // status
+        Constraint::Length(9),  // LastQty
+        Constraint::Length(11), // LastPx
+        Constraint::Length(9),  // CumQty
+        Constraint::Length(11), // AvgPx
     ];
     let table = Table::new(rows, widths)
         .header(header)
@@ -112,6 +101,14 @@ pub fn render(frame: &mut Frame, area: Rect, timeline: &OrderTimeline, cursor: u
         ts.select(Some(cursor.min(timeline.events.len().saturating_sub(1))));
     }
     frame.render_stateful_widget(table, chunks[1], &mut ts);
+}
+
+/// Format an optional FIX byte field as `String`, falling back to "-"
+/// when absent. Used for the per-fill / cumulative columns where the
+/// underlying value is already a numeric string in the wire bytes.
+fn fmt_bytes_or_dash(v: Option<&[u8]>) -> String {
+    v.map(|b| String::from_utf8_lossy(b).into_owned())
+        .unwrap_or_else(|| "-".into())
 }
 
 /// Format a `SystemTime` as `YYYY-MM-DD HH:MM:SS` (UTC). We don't pull in

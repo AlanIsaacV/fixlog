@@ -137,6 +137,10 @@ fn lines() -> Vec<Line<'static>> {
             "timeline for a ClOrdID (default: tag 11 of cursor)",
         ),
         entry(
+            ":consolidated",
+            "one row per order family (cum-qty, notional, fills); Enter drills into :orders",
+        ),
+        entry(
             ":histogram [bucket]",
             "temporal histogram (bucket: 1s, 500ms, 100us, 2m …)",
         ),

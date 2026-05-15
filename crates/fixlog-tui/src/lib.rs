@@ -169,6 +169,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Overlays draw last so they sit on top of the main layout. Each view
     // paints a `Clear` over its centered rect so list/detail underneath
     // don't bleed through.
+    //
+    // Consolidated takes `&mut AppState` (it owns the sticky `viewport_top`
+    // and re-clamps it against the live body height per frame), so we
+    // dispatch it before the clone-and-match path used by the rest.
+    if matches!(app.state.overlay, Some(state::Overlay::Consolidated { .. })) {
+        view::consolidated::render(frame, area, &mut app.state);
+        return;
+    }
     if let Some(overlay) = app.state.overlay.clone() {
         match overlay {
             state::Overlay::Sessions { map, cursor } => {
@@ -188,6 +196,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             state::Overlay::Histogram { histogram, width } => {
                 view::histogram::render(frame, area, &histogram, width);
             }
+            state::Overlay::Consolidated { .. } => unreachable!("dispatched above"),
             state::Overlay::Help { scroll } => {
                 view::help::render(frame, area, scroll);
             }

@@ -268,6 +268,25 @@ pub enum Overlay {
         histogram: Histogram,
         width: usize,
     },
+    /// Consolidated order summary computed by streaming
+    /// [`fixlog_analysis::orders_consolidated::ConsolidatedBuilder`] over
+    /// the current `mmap` and turned into a render-ready
+    /// [`crate::view::consolidated::ConsolidatedView`]. `cursor` selects a
+    /// row; `Enter` opens the existing [`Overlay::Orders`] for that row's
+    /// root ClOrdID. The view is wrapped in `Arc` so the per-frame
+    /// `app.state.overlay.clone()` (see `lib.rs`) is a refcount bump
+    /// instead of a deep copy of every order row.
+    Consolidated {
+        view: Arc<crate::view::consolidated::ConsolidatedView>,
+        cursor: usize,
+        /// First visible row index. Sticky across frames so navigation
+        /// doesn't jump-center the cursor on every keystroke; clamped by
+        /// the render path via the same logic as the main list's
+        /// [`AppState::ensure_cursor_visible`]. Render virtualisation —
+        /// only the slice `[viewport_top .. viewport_top+h)` is turned
+        /// into `Row<'_>` per frame — depends on this field.
+        viewport_top: usize,
+    },
     /// Keybinding + command cheatsheet rendered by `view::help`. `scroll`
     /// is the first row index rendered inside the overlay viewport so the
     /// user can page through sections taller than the terminal.
@@ -352,6 +371,13 @@ pub struct AppState {
     /// Active overlay (`:sessions`, `O`/`:orders`, diff, bookmarks,
     /// `:histogram`). `None` when only the main layout is visible.
     pub overlay: Option<Overlay>,
+    /// One-slot stack for drill-down navigation. When the user opens a
+    /// child overlay from a parent (e.g. `Enter` on a Consolidated row
+    /// opens an Orders timeline), the parent is parked here so `Esc`
+    /// restores it instead of falling all the way back to the main list.
+    /// Any user-initiated overlay command (`:sessions`, `:histogram`, …)
+    /// clears this slot so a stale parent never resurfaces.
+    pub previous_overlay: Option<Overlay>,
     /// Diff slots selected via `dd` (slot A) and `dD` (slot B). Each is an
     /// ordinal; once both are set, the diff overlay can be opened.
     pub diff_slots: [Option<u32>; 2],
@@ -460,6 +486,35 @@ impl AppState {
     /// `(tag, raw_value_bytes)`. Used by `f`/`x` to build a filter
     /// expression. Returns `None` when the cache is empty or the cursor is
     /// out of range.
+    /// Open `new` as the active overlay, discarding any parked parent.
+    /// All user-initiated overlay commands (`:sessions`, `:histogram`,
+    /// `:consolidate`, `:marks`, `:help`, `O`, the diff trigger, etc.)
+    /// go through this so an unrelated stale parent never resurfaces on
+    /// the next `Esc`.
+    pub fn open_overlay(&mut self, new: Overlay) {
+        self.previous_overlay = None;
+        self.overlay = Some(new);
+    }
+
+    /// `Esc` semantics on an overlay: restore the parked parent if a
+    /// drill-down put one there, otherwise close back to the main
+    /// layout.
+    pub fn esc_overlay(&mut self) {
+        if let Some(prev) = self.previous_overlay.take() {
+            self.overlay = Some(prev);
+        } else {
+            self.overlay = None;
+        }
+    }
+
+    /// Force-close the overlay stack — used by `Enter`-style flows that
+    /// commit a result (jump-to-cursor, apply-filter) and are done with
+    /// any breadcrumb trail.
+    pub fn close_overlay(&mut self) {
+        self.overlay = None;
+        self.previous_overlay = None;
+    }
+
     pub fn detail_cursor_field(&self) -> Option<(u32, Vec<u8>)> {
         let resolved = self
             .detail_cache
@@ -556,6 +611,7 @@ pub fn bootstrap_with_sort(
         search_last: None,
         search_last_text: None,
         overlay: None,
+        previous_overlay: None,
         diff_slots: [None, None],
         bookmarks: HashMap::new(),
         skip_common: false,

@@ -4,6 +4,7 @@
 //! cursor visibility). Anything load-bearing happens in `input.rs`/`state.rs`.
 
 pub mod command;
+pub mod consolidated;
 pub mod detail;
 pub mod diff;
 pub mod help;

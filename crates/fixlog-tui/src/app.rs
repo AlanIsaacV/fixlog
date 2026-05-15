@@ -194,11 +194,11 @@ impl App {
                 // Only meaningful as a completion for m / ' — handled above.
             }
             Action::OpenHelp => {
-                self.state.overlay = Some(Overlay::Help { scroll: 0 });
+                self.state.open_overlay(Overlay::Help { scroll: 0 });
             }
             Action::OverlayClose => {
                 if self.state.overlay.is_some() {
-                    self.state.overlay = None;
+                    self.state.esc_overlay();
                 } else if self.state.pending_prefix.is_some() {
                     // Swallow Esc to also clear a stuck prefix.
                 } else {
@@ -349,7 +349,7 @@ impl App {
             if a == b {
                 self.state.status = StatusMessage::info("diff: both slots same");
             } else {
-                self.state.overlay = Some(Overlay::Diff);
+                self.state.open_overlay(Overlay::Diff);
             }
         } else {
             let label = if slot == 0 { "A" } else { "B" };
@@ -397,7 +397,7 @@ impl App {
     fn overlay_intercept(&mut self, action: &Action) -> bool {
         match action {
             Action::OverlayClose => {
-                self.state.overlay = None;
+                self.state.esc_overlay();
                 true
             }
             Action::Quit => false,
@@ -427,6 +427,17 @@ impl App {
                 }
                 if let Some(Overlay::Marks { cursor }) = &mut self.state.overlay {
                     let len = self.state.bookmarks.len();
+                    if len == 0 {
+                        return true;
+                    }
+                    *cursor = match action {
+                        Action::CursorDown => (*cursor + 1).min(len - 1),
+                        _ => cursor.saturating_sub(1),
+                    };
+                    return true;
+                }
+                if let Some(Overlay::Consolidated { view, cursor, .. }) = &mut self.state.overlay {
+                    let len = view.rows.len();
                     if len == 0 {
                         return true;
                     }
@@ -473,6 +484,18 @@ impl App {
                     };
                     return true;
                 }
+                if let Some(Overlay::Consolidated { view, cursor, .. }) = &mut self.state.overlay {
+                    let len = view.rows.len();
+                    if len == 0 {
+                        return true;
+                    }
+                    const STEP: usize = 10;
+                    *cursor = match action {
+                        Action::CursorHalfPageDown => (*cursor + STEP).min(len - 1),
+                        _ => cursor.saturating_sub(STEP),
+                    };
+                    return true;
+                }
                 if let Some(Overlay::Help { scroll }) = &mut self.state.overlay {
                     const STEP: u16 = 10;
                     *scroll = match action {
@@ -504,6 +527,16 @@ impl App {
                     }
                     return true;
                 }
+                if let Some(Overlay::Consolidated { view, cursor, .. }) = &mut self.state.overlay {
+                    let len = view.rows.len();
+                    if len > 0 {
+                        *cursor = match action {
+                            Action::CursorTop => 0,
+                            _ => len - 1,
+                        };
+                    }
+                    return true;
+                }
                 if let Some(Overlay::Help { scroll }) = &mut self.state.overlay {
                     *scroll = match action {
                         Action::CursorTop => 0,
@@ -523,6 +556,8 @@ impl App {
                     self.jump_to_orders_selection();
                 } else if matches!(self.state.overlay, Some(Overlay::Marks { .. })) {
                     self.jump_to_marks_selection();
+                } else if matches!(self.state.overlay, Some(Overlay::Consolidated { .. })) {
+                    self.drill_into_consolidated_selection();
                 }
                 true
             }
@@ -540,19 +575,52 @@ impl App {
             return;
         };
         let Some(event) = timeline.events.get(cursor) else {
-            self.state.overlay = None;
+            self.state.close_overlay();
             return;
         };
         let target = event.ordinal;
         if let Some(idx) = self.state.visible.iter().position(|&o| o == target) {
             self.state.cursor = idx;
             self.state.mode = ViewMode::Browse;
-            self.state.overlay = None;
+            self.state.close_overlay();
             self.state.status = StatusMessage::info(format!("jumped to #{target}"));
         } else {
             self.state.status = StatusMessage::warn(format!(
                 "message #{target} is hidden by current filter — clear filter to see it"
             ));
+        }
+    }
+
+    /// `Enter` on a consolidated row: replace the overlay with the
+    /// existing `Overlay::Orders` for that row's root ClOrdID. The user
+    /// goes from the "all orders" table straight into the per-order
+    /// timeline + Gantt view.
+    fn drill_into_consolidated_selection(&mut self) {
+        // Clone the parent Consolidated overlay (Arc-wrapped → cheap)
+        // before we hand control to `open_orders_overlay`. If the drill
+        // succeeds we park the parent so `Esc` on the Orders timeline
+        // restores the consolidated list instead of falling all the way
+        // back to the main message view.
+        let Some(parent) = self.state.overlay.clone() else {
+            return;
+        };
+        let Overlay::Consolidated {
+            ref view, cursor, ..
+        } = parent
+        else {
+            return;
+        };
+        let Some(row) = view.rows.get(cursor) else {
+            self.state.close_overlay();
+            return;
+        };
+        let id_str = String::from_utf8_lossy(&row.root_clordid).into_owned();
+        // `open_orders_overlay` calls `open_overlay`, which clears any
+        // previously parked parent. Re-park ours after the fact iff the
+        // drill actually produced an Orders overlay.
+        crate::command::open_orders_overlay(&mut self.state, Some(&id_str));
+        if matches!(self.state.overlay, Some(Overlay::Orders { .. })) {
+            self.state.previous_overlay = Some(parent);
         }
     }
 
@@ -569,13 +637,13 @@ impl App {
             self.state.bookmarks.iter().map(|(c, o)| (*c, *o)).collect();
         entries.sort_by_key(|(c, _)| *c);
         let Some((c, target)) = entries.get(cursor).copied() else {
-            self.state.overlay = None;
+            self.state.close_overlay();
             return;
         };
         if let Some(idx) = self.state.visible.iter().position(|&o| o == target) {
             self.state.cursor = idx;
             self.state.mode = ViewMode::Browse;
-            self.state.overlay = None;
+            self.state.close_overlay();
             self.state.status = StatusMessage::info(format!("jumped to '{c}' (#{target})"));
         } else {
             self.state.status = StatusMessage::warn(format!(
@@ -591,7 +659,7 @@ impl App {
             return;
         };
         let Some((sender, target)) = session_at(&map, cursor) else {
-            self.state.overlay = None;
+            self.state.close_overlay();
             return;
         };
         let expr_text = format!(
@@ -603,7 +671,7 @@ impl App {
             Ok(_) => {
                 self.state.user_filter_text = Some(expr_text);
                 recompute_effective_filter(&mut self.state);
-                self.state.overlay = None;
+                self.state.close_overlay();
                 self.state.status =
                     StatusMessage::info(format!("filter: {} match", self.state.visible.len()));
             }
