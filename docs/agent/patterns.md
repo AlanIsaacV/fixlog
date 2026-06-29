@@ -434,7 +434,7 @@ scan: it intersects the sorted `SecondaryIndex::lookup(tag, value)`
 slices (which are sorted ascending by construction — see
 `crates/index.md`). This turns `35=D` on 1M messages from ~477 ms into
 ~156 µs. Partial pushdowns (some-tags-hot-some-not) are intentionally
-skipped — complexity for little gain; see `docs/PHASE4_PLAN.md` §P4-T14.
+skipped — complexity for little gain; see `state.md` (P4-T14).
 
 ## Do not
 

@@ -26,14 +26,14 @@ LLM-facing documentation for `fixlog`. Each file below is self-contained and can
 | Hot-tag pre-filter / AST pushdown | `crates/query.md` §hot_equalities, `crates/index.md` §SecondaryIndex |
 | Work with test fixtures (add new, debug expected counts) | `reference/fixtures.md` |
 | Cross-crate change, API boundary, lifetime issue | `patterns.md`, plus the relevant `crates/*.md` |
-| Plan next phase / next task | `state.md`, `../ROADMAP.md`, `../PHASE2_PLAN.md` |
+| Plan next phase / next task | `state.md` (§"What's next" + per-phase task tables) |
 | Debug a parse failure on a real log | `crates/parser.md`, `reference/fixtures.md`, `reference/fix-protocol.md` |
-| Understand crate deps, re-exports, versioning | `crates/core.md`, `../ARCHITECTURE.md` §Dependencias |
+| Understand crate deps, re-exports, versioning | `crates/core.md`, `../architecture.md` §"Crate dependency graph" |
 
 ## Files in this directory
 
 - `INDEX.md` — this file. Always loaded.
-- `state.md` — current phase + task status snapshot. Reflects reality (may diverge from `PHASE1_PLAN.md` which was the original plan).
+- `state.md` — current phase + task status snapshot. The single source of truth for status (the original `PHASE*_PLAN.md` files have been retired).
 - `patterns.md` — cross-cutting code patterns (zero-copy, error handling, test helpers, tracing).
 - `crates/parser.md` — `fixlog-parser` internals: tokenizer state machine, BeginString scan, checksum tolerance.
 - `crates/format.md` — `fixlog-format` internals: sniffer heuristics, current limitations.
@@ -49,11 +49,12 @@ LLM-facing documentation for `fixlog`. Each file below is self-contained and can
 
 ## Related canonical docs (outside agent/)
 
-- `CLAUDE.md` — user preferences, stack, conventions, anti-patterns. **Always loaded** by the system.
-- `docs/ARCHITECTURE.md` — original design doc. Some parts are **aspirational** (e.g. TUI data flow, RoaringBitmap in the secondary index). Use `docs/agent/` for current reality; use `ARCHITECTURE.md` for long-term intent.
-- `docs/ROADMAP.md` — 5-phase roadmap.
-- `docs/PHASE1_PLAN.md` — detailed task list for Phase 1 (closed).
-- `docs/PHASE2_PLAN.md` — detailed task list for Phase 2 (current phase; status may be stale; see `state.md` for truth).
+- `CLAUDE.md` — router: stack, run/test/lint, critical rules, doc pointers. **Always loaded** by the system.
+- `docs/architecture.md` — human-facing layout, crate graph, data flow, key libraries, gotchas.
+- `docs/conventions.md` — code style, errors, logging, testing, commits.
+- `docs/runbook.md` — build, install, run, env vars, troubleshooting.
+- `docs/features/` — user-facing capability docs (parsing, query/grep/tailing, TUI, analysis/consolidation).
+- `docs/decisions/`, `docs/postmortems/` — ADRs and incident write-ups (seeded).
 
 ## Style guide for these docs
 

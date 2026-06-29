@@ -119,13 +119,10 @@ There is **no database**. The "schema" is the FIX protocol itself, encoded as di
   so trailing partial writes are re-scanned by `append_from_offset`. Don't assume `file_size == buf.len()`.
 - **Query DSL is tag-number only** (`35=D`, not `MsgType=NewOrderSingle`). `fixlog-query` stays
   dict-agnostic on purpose.
-- **`docs/ARCHITECTURE.md` (uppercase) is the older, partly-aspirational design doc** (e.g. it
-  describes a RoaringBitmap secondary index that was not adopted). This file + `docs/agent/*` are
-  the current reality. The filesystem here is case-sensitive, so both files coexist.
 
 ## See also
 
 - `docs/agent/INDEX.md` — routing table: task type → which internals file to read.
 - `docs/agent/state.md` — authoritative phase/status, benchmarks, known gaps.
 - `docs/features/` — user-facing capability docs.
-- `README.md` — end-user usage with command examples (Spanish).
+- `README.md` — end-user usage with command examples (English front door).

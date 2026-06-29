@@ -79,4 +79,4 @@ How code is written, formatted, tested and committed in this repo. Derived from 
 
 - Plan-mode first for architectural tasks; confirm the approach before coding.
 - Validate changes against real fixtures before declaring a task done.
-- `docs/agent/state.md` is authoritative on status when it disagrees with `docs/PHASE*_PLAN.md`.
+- `docs/agent/state.md` is the authoritative record of current status (phases, task tables, benchmarks).

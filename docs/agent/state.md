@@ -1,6 +1,6 @@
 # Project state
 
-> Snapshot of what exists and what's next. Authoritative over `PHASE*_PLAN.md` files when they disagree.
+> Snapshot of what exists and what's next. The single source of truth for status (the original `PHASE*_PLAN.md` files have been retired; their task tables live below).
 
 ## Phase
 
@@ -74,7 +74,7 @@ Fase 1 is closed (all T01-T16 done; T17 only informal sign-off).
 - `crates/fixlog-analysis` — session tracking, order lifecycle, temporal histogram (Phase 4). Pure library; depends on `fixlog-core`. Consumed directly by `fixlog-cli` and `fixlog-tui`. Not re-exported from `fixlog-core` (by design — analysis composes on top of core primitives and stays distinct). See `crates/analysis.md`.
 - `crates/fixlog-render` — shared rendering helpers (`write_pretty`, `write_jsonl`, `write_fix`, `write_csv_header` + `write_csv_row`). Depends on `fixlog-dict` + `fixlog-parser` only. Re-exported as `fixlog_core::render`; consumed by `fixlog-cli` (parse/grep) and `fixlog-tui` (`:export`). Added in Fase 5 partial (2026-04-18).
 
-## Completed (vs PHASE1_PLAN.md)
+## Completed — Phase 1
 
 | Task | Status | Notes |
 |------|--------|-------|
@@ -96,7 +96,7 @@ Fase 1 is closed (all T01-T16 done; T17 only informal sign-off).
 | T16 Criterion benchmarks | done | `crates/fixlog-parser/benches/parse.rs` — synthetic (soh/pipe/prefix), real (fix44_om/fixt11_md), and a `parse_known_soh/8MiB` microbench. Baseline below. |
 | T17 Manual E2E validation | **partial** | CLI has been smoke-tested against real fixtures; no formal sign-off. |
 
-## Completed (vs PHASE2_PLAN.md)
+## Completed — Phase 2
 
 | Task | Status | Notes |
 |------|--------|-------|
@@ -111,7 +111,7 @@ Fase 1 is closed (all T01-T16 done; T17 only informal sign-off).
 | P2-T09 `--follow` tailing | done | `notify` + re-mmap + rotation/truncation detection. 500 ms poll fallback. |
 | P2-T10 `index` subcommand | **deferred** | Optional / stretch; move to Phase 5 alongside config + cache persistence. |
 
-## Completed (vs PHASE3_PLAN.md)
+## Completed — Phase 3
 
 | Task | Status | Notes |
 |------|--------|-------|
@@ -132,7 +132,7 @@ Fase 1 is closed (all T01-T16 done; T17 only informal sign-off).
 | P3-T15 Frame budget bench | done | `crates/fixlog-tui/benches/frame.rs` with `tui_bootstrap/1M_messages`, `tui_frame/list_detail_status_200x50`, `tui_filter/apply_35eqD_1M`. Amplifies `minimal_4.4.log × 100k` to tempfile; uses `TestBackend`. Frame ~737 µs (target <16 ms — ~22× margin). See §"TUI performance" below. Parser and index baselines confirmed within ±5%. |
 | P3-T16 Docs + state sync | done | New `docs/agent/crates/tui.md` (layout, invariants, keybindings, input modes, follow strategy, bench numbers). `docs/agent/INDEX.md` updated (routing entry + file list). `state.md` (this file) updated at every task close. |
 
-## Completed (vs PHASE4_PLAN.md)
+## Completed — Phase 4
 
 | Task | Status | Notes |
 |------|--------|-------|
@@ -251,6 +251,6 @@ Items previously in this list and since done in Fase 5 partial (2026-04-18): Arc
 - **`LogIndex.consumed` semantics**: points at the byte immediately past the last *successfully* indexed message, not at the end of the buffer. This is intentional — trailing partial messages (producer flushed half) are re-scanned by `append_from_offset` instead of being claimed-and-lost. Callers that expected `file_size == buf.len()` need to track that separately.
 - **Query DSL is tag-number only**: no `MsgType=NewOrderSingle` yet — the parser stays dict-agnostic and `fixlog-query` doesn't depend on `fixlog-dict`. Symbolic names belong in a future thin adapter if we need them, probably in Phase 3 alongside the TUI.
 - **Query `!=` and repeating groups**: `N!=X` is true iff *no* occurrence of tag N equals X. For repeating groups with multiple instances of the same tag, this is stricter than "some instance is different" — see module docs in `fixlog-query/src/eval.rs`. Change if real usage complains.
-- **Secondary index representation**: `HashMap<(tag, SmallVec<[u8;16]>), Vec<u32>>` — not the `RoaringBitmap` that `ARCHITECTURE.md` aspired to. Roaring is denser for huge files but adds a dep and is slower to iterate; default is faster unless the memory budget becomes tight.
+- **Secondary index representation**: `HashMap<(tag, SmallVec<[u8;16]>), Vec<u32>>` — not the `RoaringBitmap` that the original design doc aspired to. Roaring is denser for huge files but adds a dep and is slower to iterate; default is faster unless the memory budget becomes tight.
 - **`--follow` event handling**: we watch the parent directory non-recursively and accept `Modify(Data|Name|Any)` / `Create` / `Remove` as triggers. `Access(Read)` events are ignored. Polling fallback on 500 ms timeout catches coalesced-away writes on macOS.
 - **SIGINT in follow mode**: the follow loop never returns normally. The process relies on the default SIGINT handler to terminate cleanly; we do not install our own handler (no shared state to flush — stdout is flushed after every match).

@@ -27,7 +27,7 @@ lookup map over hot tags. Lives at `crates/fixlog-index/`.
 - Secondary ordinals are indices into `messages`, monotonic, deduplicated within one
   message (a tag appearing twice with the same value records the ordinal once).
 
-## REALITY (vs `ARCHITECTURE.md`)
+## REALITY (vs the original design intent)
 
 - `secondary` is `HashMap<(u32, SmallVec<[u8;16]>), Vec<u32>>`, *not* `RoaringBitmap`. The
   bitmap gives denser storage for huge files but adds a dep and is slower to iterate.

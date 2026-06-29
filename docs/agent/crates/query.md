@@ -37,7 +37,7 @@ value     := bareword | "\"" …bytes… "\""      ; bareword = non-space, non-p
   semantics match the idiomatic expectation for `grep -v`.
 - Short-circuiting on `AND`/`OR` — the right side is skipped if the left is conclusive.
 
-## REALITY (vs `ARCHITECTURE.md`)
+## REALITY (vs the original design intent)
 
 - No dictionary integration yet. The DSL is tag-number only; `MsgType=NewOrderSingle`
   isn't supported. Adding it requires the query crate to depend on `fixlog-dict`, which

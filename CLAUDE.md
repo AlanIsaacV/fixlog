@@ -34,4 +34,3 @@ cargo clippy --all-targets --all-features -- -D warnings
 - `docs/features/` — capability docs (parsing & sniffing, query/grep/tailing, TUI, analysis & consolidation).
 - `docs/agent/` — dense LLM-facing internals, one file per crate. `docs/agent/state.md` is **authoritative** on current phase/status.
 - `docs/decisions/`, `docs/postmortems/` — ADRs and incident write-ups (seeded, empty).
-- Historical planning docs (aspirational; kept for design intent): `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`, `docs/PHASE*_PLAN.md`.
