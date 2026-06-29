@@ -30,6 +30,15 @@ Resolution also powers the TUI detail panel, `grep`/`tui` rendering, and all ana
 
 ## Data flow
 
+```mermaid
+flowchart LR
+    file[("file")] -->|mmap| sniff["format::sniff<br/>(head chunk)"]
+    sniff --> parse["parser<br/>scan 8=FIX, tokenize<br/>zero-copy slices"]
+    parse -. on demand .-> dict["dict::resolve<br/>chain by BeginString / ApplVerID"]
+    dict --> render["render<br/>pretty / JSONL"]
+    parse --> render
+```
+
 `mmap` the file → `format::sniff` on the head → parser scans for `8=FIX` and tokenizes each message
 (zero-copy slices into the mmap) → on demand, `dict` resolves tags/values using the chain chosen from
 `BeginString`/`ApplVerID` → `render` writes pretty or JSONL.

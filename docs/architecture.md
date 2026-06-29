@@ -33,17 +33,45 @@ Release profile is tuned for throughput: `lto = true`, `codegen-units = 1`.
 
 ## Crate dependency graph
 
-```
-fixlog-format ─┐
-fixlog-parser ─┼─► fixlog-dict ─┐
-   │           │                ├─► fixlog-render ─┐
-   │           ├─► fixlog-index │                  │
-   │           └─► fixlog-query │                  │
-   └───────────────────────────┴──────────────────┴─► fixlog-core
-                                                          │
-                                  fixlog-analysis ◄───────┘ (depends on core)
-                                       │
-            fixlog-cli ──► fixlog-tui ─┘   (cli also depends on core + analysis)
+Arrows point from a crate to the crates it depends on (`A --> B` ≡ "A depends on B").
+
+```mermaid
+graph TD
+    format[fixlog-format]
+    parser[fixlog-parser]
+    dict[fixlog-dict]
+    index[fixlog-index]
+    query[fixlog-query]
+    render[fixlog-render]
+    core[fixlog-core]
+    analysis[fixlog-analysis]
+    tui[fixlog-tui]
+    cli[fixlog-cli]
+
+    parser --> format
+    dict --> parser
+    index --> parser
+    index --> format
+    query --> parser
+    render --> parser
+    render --> dict
+    core --> format
+    core --> parser
+    core --> dict
+    core --> index
+    core --> query
+    core --> render
+    analysis --> core
+    tui --> core
+    tui --> analysis
+    cli --> core
+    cli --> analysis
+    cli --> tui
+
+    classDef facade fill:#e8f0fe,stroke:#4285f4,stroke-width:2px;
+    classDef frontend fill:#fef3e8,stroke:#f4a142,stroke-width:2px;
+    class core facade;
+    class cli,tui frontend;
 ```
 
 Notes:
@@ -52,6 +80,21 @@ Notes:
 - `fixlog-tui` is a library crate driven by the `fixlog tui` CLI subcommand.
 
 ## Data flow
+
+```mermaid
+flowchart TD
+    file[("Log file")] -->|"mmap (memmap2)"| sniff["sniff<br/>LogFormat: separator · prefix · ending"]
+    sniff --> parse["parse<br/>scan 8=FIX (memchr) → RawMessage (tag/value slices)"]
+    parse --> index["index<br/>offsets + hot-tag map (rayon)"]
+    parse -. on demand .-> dict["resolve<br/>tags → names · enums → labels<br/>chain by BeginString / ApplVerID"]
+    index --> query["query<br/>filter AST eval"]
+    query --> render["render<br/>pretty · JSONL · raw FIX · CSV"]
+    dict --> render
+    parse --> analysis["analyze<br/>sessions · orders · histogram · consolidated"]
+    index --> analysis
+    index --> tui["TUI<br/>virtual list · detail · overlays"]
+    dict --> tui
+```
 
 1. **Open & sniff.** A file is `mmap`ed read-only (`memmap2`); the first chunk is fed to
    `fixlog_format::sniff`, which returns a `LogFormat` (separator, line prefix, line ending).

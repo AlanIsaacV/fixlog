@@ -37,6 +37,21 @@ All four are also TUI overlays (`:sessions`, `:orders`/`O`, `:histogram`, `:cons
 
 ## Data flow
 
+```mermaid
+flowchart TD
+    idx[("LogIndex")] --> sess["sessions<br/>(SenderCompID, TargetCompID) pairs · gaps"]
+    idx --> ord["orders<br/>timeline by ClOrdID (hot-tag 11/37/41)"]
+    idx --> hist["histogram<br/>SendingTime buckets (rayon)"]
+
+    subgraph consolidation["consolidate — streaming, not index-driven"]
+        direction LR
+        src["inputs: log · log.gz · stdin (-)"] --> chunk["read 1 MiB chunks<br/>(carry trailing partial)"]
+        chunk --> uf["union-find on 11 → 41<br/>(cancel/replace chains)"]
+        uf --> acc["per-root order state<br/>dedup fills by ExecID (17)"]
+        acc --> fin["finish() → Vec&lt;OrderConsolidated&gt;"]
+    end
+```
+
 - **Sessions / orders / histogram** read the built `LogIndex` (orders use the secondary hot-tag
   lookup on tags 11/37/41) and materialize aggregates.
 - **Consolidation is streaming, not index-driven**: `ConsolidatedBuilder::push_source` reads each

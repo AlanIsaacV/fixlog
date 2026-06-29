@@ -39,6 +39,17 @@ rg "35=D" *.log | fixlog tui            # stdin pipe (FILE omitted); --follow re
 
 ## Data flow
 
+```mermaid
+flowchart TD
+    boot["bootstrap<br/>mmap + sniff + parallel index + compile filter"] --> state[("AppState<br/>mmap · index · overlays")]
+    ev["crossterm event"] --> action["input: map_key → Action"]
+    action --> mutate["state mutation<br/>(scroll · filter · overlay · follow)"]
+    state --> mutate
+    mutate --> render["render<br/>visible list slice + detail panel + overlays"]
+    state --> render
+    render --> ev
+```
+
 `bootstrap` mmaps + sniffs + builds the parallel index + compiles the initial filter into
 `AppState`. The event loop maps crossterm events → `Action`s → state mutations; the renderer draws
 only the visible slice of the list plus the detail panel for the message under the cursor (parsed

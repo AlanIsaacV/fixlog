@@ -9,12 +9,16 @@ It auto-detects the log layout (separator, line prefix, encoding) instead of ass
 the same binary handles raw QuickFIX logs, pipe-rendered logs, and logs wrapped in timestamp/logback
 prefixes. Dictionaries cover **FIX 4.4, FIXT.1.1, FIX 5.0, 5.0 SP1 and 5.0 SP2**.
 
-```
-file ──mmap──► sniff (separator/prefix) ──► parse (zero-copy 8=FIX scan) ──► resolve (tags→names)
-                                                          │
-                          index (rayon, hot-tag map) ◄────┤
-                                  │                        ▼
-                          query / grep / --follow     CLI render · TUI · analysis
+```mermaid
+flowchart LR
+    F[("FIX log<br/>(mmap)")] --> S["sniff<br/>separator · prefix · encoding"]
+    S --> P["parse<br/>zero-copy 8=FIX scan"]
+    P --> R["resolve<br/>tags → names"]
+    P --> I["index<br/>rayon · hot-tag map"]
+    I --> Q["query · grep · --follow"]
+    R --> O["CLI render · TUI · analysis"]
+    Q --> O
+    I --> O
 ```
 
 ## Install
